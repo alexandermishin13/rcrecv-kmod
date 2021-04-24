@@ -1,0 +1,24 @@
+/dts-v1/;
+/plugin/;
+
+/ {
+    compatible = "allwinner,sun8i-h3";
+};
+
+&pio {
+    rcrecv_pins: rcrecv_pins {
+	allwinner,pins = "PA13";
+	allwinner,function = "gpio_in";
+	allwinner,pull = "none";
+    };
+};
+
+&{/soc} {
+    gpiorcrecv@0 {
+	compatible = "rcrecv";
+	pinctrl-names = "default";
+	pinctrl-0 = <&rcrecv_pins>;
+	gpios = <&pio 0 13 0>;
+	status = "okay";
+    };
+};
