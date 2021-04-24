@@ -4,7 +4,8 @@ FreeBSD kernel module for GPIO remote control receiver
 
 ## Status
 
-* Get the code from a remote control
-* Set kernel variables
+* Gets the code from a remote control;
+* Sets kernel variables;
+* Creates and destroys a device file;
 
 Under early development

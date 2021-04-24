@@ -50,6 +50,7 @@ __FBSDID("$FreeBSD$");
 #include <sys/conf.h>   /* cdevsw struct */
 //#include <sys/param.h>  /* defines used in kernel.h */
 #include <sys/kernel.h> /* types used in module initialization */
+#include <sys/uio.h>    /* uio struct */
 #include <sys/bus.h>
 
 #include <sys/gpio.h>
@@ -73,8 +74,7 @@ SIMPLEBUS_PNP_INFO(compat_data);
 /* Use the first/only configured pin. */
 #define	PIN_IDX 0
 
-#define	PULSE_LENGTH 100
-#define	PULSE_LIMIT (PULSE_LENGTH << 2) - (PULSE_LENGTH >> 1)
+#define RCRECV_CDEV_NAME "rcrecv"
 
 #define SEPARATION_LIMIT 4600
 #define RECEIVE_TOLERANCE 60
@@ -97,6 +97,7 @@ struct rcrecv_softc {
     size_t		 received_bit_length;
     size_t		 received_delay;
     int			 received_pulse_length;
+    struct cdev		*cdev;
     size_t		 timings[RCSWITCH_MAX_CHANGES];
 };
 
@@ -128,9 +129,27 @@ static protocol proto[] = {
     { 320, { 36, 1},  { 1, 2},  { 2, 1},  true }      // protocol 12 (SM5212)
 };
 
-static int rcrecv_probe(device_t);
-static int rcrecv_attach(device_t);
-static int rcrecv_detach(device_t);
+/* Function prototypes */
+static int		rcrecv_probe(device_t);
+static int		rcrecv_attach(device_t);
+static int		rcrecv_detach(device_t);
+
+static d_open_t		rcrecv_open;
+static d_close_t	rcrecv_close;
+static d_read_t		rcrecv_read;
+static d_write_t	rcrecv_write;
+//static d_ioctl_t	rcrecv_ioctl;
+
+/* Character device entry points */
+static struct cdevsw rcrecv_cdevsw = {
+    .d_version = D_VERSION,
+    .d_open = rcrecv_open,
+    .d_close = rcrecv_close,
+    .d_read = rcrecv_read,
+    .d_write = rcrecv_write,
+//    .d_ioctl = rcrecv_ioctl,
+    .d_name = RCRECV_CDEV_NAME,
+};
 
 static inline unsigned int
 diff(int A, int B)
@@ -264,6 +283,10 @@ rcrecv_detach(device_t dev)
     if (sc->pin != NULL)
 	gpiobus_release_pin(GPIO_GET_BUS(sc->pin->dev), sc->pin->pin);
 
+    /* Destroy the tm1637 cdev. */
+    if (sc->cdev != NULL)
+	destroy_dev(sc->cdev);
+
     return (0);
 }
 
@@ -359,6 +382,58 @@ rcrecv_attach(device_t dev)
 	return (err);
     }
 
+    /* Create the tm1637 cdev. */
+    err = make_dev_p(MAKEDEV_CHECKNAME | MAKEDEV_WAITOK,
+	    &sc->cdev,
+	    &rcrecv_cdevsw,
+	    0,
+	    UID_ROOT,
+	    GID_WHEEL,
+	    0600,
+	    RCRECV_CDEV_NAME);
+
+    if (err != 0) {
+	device_printf(dev, "Unable to create rcrecv cdev\n");
+	rcrecv_detach(dev);
+	return (err);
+    }
+
+    return (0);
+}
+
+static int
+rcrecv_open(struct cdev *cdev, int oflags __unused, int devtype __unused,
+    struct thread *td __unused)
+{
+
+#ifdef DEBUG
+	uprintf("Device \"%s\" opened.\n", rcrecv_cdevsw.d_name);
+#endif
+
+    return (0);
+}
+
+static int
+rcrecv_close(struct cdev *cdev __unused, int fflag __unused, int devtype __unused,
+    struct thread *td __unused)
+{
+
+#ifdef DEBUG
+	uprintf("Device \"%s\" closed.\n", rcrecv_cdevsw.d_name);
+#endif
+
+    return (0);
+}
+
+static int
+rcrecv_read(struct cdev *cdev, struct uio *uio, int ioflag __unused)
+{
+    return (0);
+}
+
+static int
+rcrecv_write(struct cdev *cdev, struct uio *uio, int ioflag __unused)
+{
     return (0);
 }
 
