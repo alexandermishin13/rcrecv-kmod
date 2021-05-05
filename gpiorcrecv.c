@@ -90,11 +90,13 @@ struct rcrecv_softc {
     void		*intr_cookie;
     struct resource	*intr_res;
     int			 intr_rid;
+    char		 received_code[sizeof(unsigned long) + 1];
+    unsigned long	 received_value;
     long		 last_evtime;
     size_t		 count_repeat;
     size_t		 count_change;
-    unsigned long	 received_value;
     size_t		 received_bit_length;
+    size_t		 minimal_bit_length;
     size_t		 received_delay;
     int			 received_pulse_length;
     struct cdev		*cdev;
@@ -187,7 +189,7 @@ rcrecv_receive_protocol(struct rcrecv_softc *sc, const protocol *p)
 	}
     } // for (size_t i = 1; i < sc->count_change - 1;
 
-    if (sc->count_change > 7) {    // ignore very short transmissions: no device sends them, so this must be noise
+    if (sc->count_change > sc->minimal_bit_length) {    // ignore very short transmissions: no device sends them, so this must be noise
 	sc->received_value = code;
 	sc->received_bit_length = (sc->count_change - 1) / 2;
 	sc->received_delay = delay;
@@ -323,6 +325,8 @@ rcrecv_attach(device_t dev)
 	CTLFLAG_RD,
 	&sc->received_pulse_length, 0, "Received pulse length");
 
+    sc->minimal_bit_length = 7;
+
 #ifdef FDT
     /* Try to configure our pin from fdt data on fdt-based systems. */
     err = gpio_pin_get_by_ofw_idx(dev, ofw_bus_get_node(dev), PIN_IDX,
@@ -398,6 +402,8 @@ rcrecv_attach(device_t dev)
 	return (err);
     }
 
+    sc->cdev->si_drv1 = sc;
+
     return (0);
 }
 
@@ -428,7 +434,45 @@ rcrecv_close(struct cdev *cdev __unused, int fflag __unused, int devtype __unuse
 static int
 rcrecv_read(struct cdev *cdev, struct uio *uio, int ioflag __unused)
 {
-    return (0);
+    struct rcrecv_softc *sc = cdev->si_drv1;
+
+    unsigned long value = sc->received_value;
+    size_t len = 0;
+    size_t i;
+    size_t amt;
+    char *dest;
+    int error;
+
+    // Check the same condition as for receiving a code
+    if (sc->received_bit_length >= sc->minimal_bit_length)
+    {
+	len = sc->received_bit_length;
+	len >>= 2;
+	if (sc->received_bit_length & 0x3)
+	    len++;
+
+	dest = sc->received_code + len;
+	*dest = '\n';
+
+	for (i = 0; i < len; i++) {
+	    *--dest = '0' + (value & 0xf);
+	    if (*dest > '9')
+		*dest += 'a' - '9' - 1;
+	    value >>= 4;
+	}
+    }
+    else {
+	dest = sc->received_code;
+	*dest = '\n';
+    }
+
+    amt = MIN(uio->uio_resid, uio->uio_offset >= len + 1 ? 0 :
+	len + 1 - uio->uio_offset);
+
+    if ((error = uiomove(sc->received_code, amt, uio)) != 0)
+	uprintf("uiomove failed!\n");
+
+    return (error);
 }
 
 static int
