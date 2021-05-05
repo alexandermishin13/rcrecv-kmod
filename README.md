@@ -39,6 +39,6 @@ fdt_overlays="your,other,overlays,sun8i-h3-rcrecv-gpio"
 
 * Gets the code from a remote control;
 * Sets kernel variables;
-* Creates and destroys a device file;
+* Creates a device file and read a last code from it;
 
 Under early development
