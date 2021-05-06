@@ -56,6 +56,8 @@ __FBSDID("$FreeBSD$");
 #include <sys/gpio.h>
 #include <dev/gpio/gpiobusvar.h>
 
+#include "include/dev/rcrecv/rcrecv.h"
+
 #ifdef FDT
 #include <dev/ofw/openfirm.h>
 #include <dev/ofw/ofw_bus.h>
@@ -98,37 +100,9 @@ struct rcrecv_softc {
     size_t		 received_bit_length;
     size_t		 minimal_bit_length;
     size_t		 received_delay;
-    int			 received_pulse_length;
+    size_t		 received_proto;
     struct cdev		*cdev;
     size_t		 timings[RCSWITCH_MAX_CHANGES];
-};
-
-typedef struct {
-    uint8_t high;
-    uint8_t low;
-} levels_ratio;
-
-typedef struct {
-    int pulse_length;
-    levels_ratio sync_factor;
-    levels_ratio zero;
-    levels_ratio one;
-    bool inverted;
-} protocol;
-
-static protocol proto[] = {
-    { 350, { 1, 31},  { 1, 3},  { 3, 1},  false },    // protocol 1
-    { 650, { 1, 10},  { 1, 2},  { 2, 1},  false },    // protocol 2
-    { 100, { 30, 71}, { 4,11},  { 9, 6},  false },    // protocol 3
-    { 380, { 1, 6},   { 1, 3},  { 3, 1},  false },    // protocol 4
-    { 500, { 6, 14},  { 1, 2},  { 2, 1},  false },    // protocol 5
-    { 450, { 23, 1},  { 1, 2},  { 2, 1},  true },     // protocol 6 (HT6P20B)
-    { 150, { 2, 62},  { 1, 6},  { 6, 1},  false },    // protocol 7 (HS2303-PT, i. e. used in AUKEY Remote)
-    { 200, { 3, 130}, { 7, 16}, { 3, 16}, false },    // protocol 8 Conrad RS-200 RX
-    { 200, { 130, 7}, { 16, 7}, { 16, 3}, true },     // protocol 9 Conrad RS-200 TX
-    { 365, { 18, 1},  { 3, 1},  { 1, 3},  true },     // protocol 10 (1ByOne Doorbell)
-    { 270, { 36, 1},  { 1, 2},  { 2, 1},  true },     // protocol 11 (HT12E)
-    { 320, { 36, 1},  { 1, 2},  { 2, 1},  true }      // protocol 12 (SM5212)
 };
 
 /* Function prototypes */
@@ -140,7 +114,7 @@ static d_open_t		rcrecv_open;
 static d_close_t	rcrecv_close;
 static d_read_t		rcrecv_read;
 static d_write_t	rcrecv_write;
-//static d_ioctl_t	rcrecv_ioctl;
+static d_ioctl_t	rcrecv_ioctl;
 
 /* Character device entry points */
 static struct cdevsw rcrecv_cdevsw = {
@@ -149,7 +123,7 @@ static struct cdevsw rcrecv_cdevsw = {
     .d_close = rcrecv_close,
     .d_read = rcrecv_read,
     .d_write = rcrecv_write,
-//    .d_ioctl = rcrecv_ioctl,
+    .d_ioctl = rcrecv_ioctl,
     .d_name = RCRECV_CDEV_NAME,
 };
 
@@ -160,8 +134,9 @@ diff(int A, int B)
 }
 
 static bool
-rcrecv_receive_protocol(struct rcrecv_softc *sc, const protocol *p)
+rcrecv_receive_protocol(struct rcrecv_softc *sc, const size_t i)
 {
+    const protocol *p = &(proto[i]);
     unsigned long code = 0;
     //Assuming the longer pulse length is the pulse captured in timings[0]
     const size_t sync_length =  ((p->sync_factor.low) > (p->sync_factor.high)) ? (p->sync_factor.low) : (p->sync_factor.high);
@@ -193,7 +168,7 @@ rcrecv_receive_protocol(struct rcrecv_softc *sc, const protocol *p)
 	sc->received_value = code;
 	sc->received_bit_length = (sc->count_change - 1) / 2;
 	sc->received_delay = delay;
-	sc->received_pulse_length = p->pulse_length;
+	sc->received_proto = i + 1;
     }
 
     return true;
@@ -223,7 +198,7 @@ rcrecv_ihandler(void *arg)
 	    sc->count_repeat++;
 	    if (sc->count_repeat == 2) {
 		for(size_t i = 0; i < NELEMS(proto); i++) {
-		    if (rcrecv_receive_protocol(sc, &(proto[i])))
+		    if (rcrecv_receive_protocol(sc, i))
 		    {
 #ifdef DEBUG
 			device_printf(sc->dev,
@@ -321,9 +296,9 @@ rcrecv_attach(device_t dev)
 	CTLFLAG_RD,
 	&sc->received_delay, 0, "Received delay");
 
-    SYSCTL_ADD_INT(ctx, tree, OID_AUTO, "pulse_length",
+    SYSCTL_ADD_UINT(ctx, tree, OID_AUTO, "proto",
 	CTLFLAG_RD,
-	&sc->received_pulse_length, 0, "Received pulse length");
+	&sc->received_proto, 0, "Received code protocol");
 
     sc->minimal_bit_length = 7;
 
@@ -479,6 +454,24 @@ static int
 rcrecv_write(struct cdev *cdev, struct uio *uio, int ioflag __unused)
 {
     return (0);
+}
+
+static int
+rcrecv_ioctl(struct cdev *cdev, u_long cmd, caddr_t data, int fflag, struct thread *td)
+{
+    struct rcrecv_softc *sc = cdev->si_drv1;
+    int error = 0;
+
+    switch (cmd) {
+	case RCRECV_READ_CODE:
+	    *(unsigned long *)data = sc->received_value;
+	    break;
+	default:
+	    error = ENOTTY;
+	    break;
+    }
+
+    return (error);
 }
 
 /* Driver bits */
