@@ -85,6 +85,8 @@ SIMPLEBUS_PNP_INFO(compat_data);
  */
 #define RCSWITCH_MAX_CHANGES 67
 
+MALLOC_DEFINE(M_RCRECVCODE, "rcrecvcode", "Struct for received code info");
+
 struct rcrecv_softc {
     device_t		 dev;
     phandle_t		 node;
@@ -93,14 +95,12 @@ struct rcrecv_softc {
     struct resource	*intr_res;
     int			 intr_rid;
     char		 received_code[sizeof(unsigned long) + 1];
-    unsigned long	 received_value;
+    struct rcrecv_code	*rc_code;
     long		 last_evtime;
     size_t		 count_repeat;
     size_t		 count_change;
-    size_t		 received_bit_length;
     size_t		 minimal_bit_length;
     size_t		 received_delay;
-    size_t		 received_proto;
     struct cdev		*cdev;
     size_t		 timings[RCSWITCH_MAX_CHANGES];
 };
@@ -165,10 +165,10 @@ rcrecv_receive_protocol(struct rcrecv_softc *sc, const size_t i)
     } // for (size_t i = 1; i < sc->count_change - 1;
 
     if (sc->count_change > sc->minimal_bit_length) {    // ignore very short transmissions: no device sends them, so this must be noise
-	sc->received_value = code;
-	sc->received_bit_length = (sc->count_change - 1) / 2;
+	sc->rc_code->value = code;
+	sc->rc_code->bit_length = (sc->count_change - 1) / 2;
 	sc->received_delay = delay;
-	sc->received_proto = i + 1;
+	sc->rc_code->proto = i + 1;
     }
 
     return true;
@@ -202,7 +202,7 @@ rcrecv_ihandler(void *arg)
 		    {
 #ifdef DEBUG
 			device_printf(sc->dev,
-			    "proto=>%i, bit=>%i, value=>%lX\n", i, sc->received_bit_length, sc->received_value);
+			    "proto=>%i, bit=>%i, value=>%lX\n", i, sc->rc_code->bit_length, sc->rc_code->value);
 #endif
 			break;
 		    }
@@ -276,6 +276,9 @@ rcrecv_attach(device_t dev)
     struct rcrecv_softc *sc = device_get_softc(dev);
     sc->dev = dev;
 
+    sc->rc_code = malloc(sizeof(*sc->rc_code), M_RCRECVCODE, M_WAITOK | M_ZERO);
+
+
     struct sysctl_ctx_list	*ctx;
     struct sysctl_oid		*tree_node;
     struct sysctl_oid_list	*tree;
@@ -286,11 +289,11 @@ rcrecv_attach(device_t dev)
 
     SYSCTL_ADD_ULONG(ctx, tree, OID_AUTO, "value",
 	CTLFLAG_RD,
-	&sc->received_value, "Value");
+	&sc->rc_code->value, "Value");
 
     SYSCTL_ADD_UINT(ctx, tree, OID_AUTO, "bit_length",
 	CTLFLAG_RD,
-	&sc->received_bit_length, 0, "Received bit length");
+	&sc->rc_code->bit_length, 0, "Received bit length");
 
     SYSCTL_ADD_UINT(ctx, tree, OID_AUTO, "delay",
 	CTLFLAG_RD,
@@ -298,7 +301,7 @@ rcrecv_attach(device_t dev)
 
     SYSCTL_ADD_UINT(ctx, tree, OID_AUTO, "proto",
 	CTLFLAG_RD,
-	&sc->received_proto, 0, "Received code protocol");
+	&sc->rc_code->proto, 0, "Received code protocol");
 
     sc->minimal_bit_length = 7;
 
@@ -410,20 +413,22 @@ static int
 rcrecv_read(struct cdev *cdev, struct uio *uio, int ioflag __unused)
 {
     struct rcrecv_softc *sc = cdev->si_drv1;
+    struct rcrecv_code *rcc = sc->rc_code;
 
-    unsigned long value = sc->received_value;
+    unsigned long value = rcc->value;
     size_t len = 0;
     size_t i;
-    size_t amt;
+    size_t amount;
     char *dest;
     int error;
+    off_t uio_offset_saved;
 
     // Check the same condition as for receiving a code
-    if (sc->received_bit_length >= sc->minimal_bit_length)
+    if (rcc->bit_length >= sc->minimal_bit_length)
     {
-	len = sc->received_bit_length;
+	len = rcc->bit_length;
 	len >>= 2;
-	if (sc->received_bit_length & 0x3)
+	if (rcc->bit_length & 0x3)
 	    len++;
 
 	dest = sc->received_code + len;
@@ -441,10 +446,15 @@ rcrecv_read(struct cdev *cdev, struct uio *uio, int ioflag __unused)
 	*dest = '\n';
     }
 
-    amt = MIN(uio->uio_resid, uio->uio_offset >= len + 1 ? 0 :
-	len + 1 - uio->uio_offset);
+    amount = MIN(uio->uio_resid,
+	    (len + 1 - uio->uio_offset > 0) ?
+	     len + 1 - uio->uio_offset : 0);
 
-    if ((error = uiomove(sc->received_code, amt, uio)) != 0)
+    uio_offset_saved = uio->uio_offset;
+    error = uiomove(sc->received_code, amount, uio);
+    uio->uio_offset = uio_offset_saved;
+
+    if (error != 0)
 	uprintf("uiomove failed!\n");
 
     return (error);
@@ -464,9 +474,24 @@ rcrecv_ioctl(struct cdev *cdev, u_long cmd, caddr_t data, int fflag, struct thre
 
     switch (cmd) {
 	case RCRECV_READ_CODE:
-	    *(unsigned long *)data = sc->received_value;
+#ifdef DEBUG
+		uprintf("ioctl(read_code, %lu)\n", sc->rc_code->value);
+#endif
+	    *(unsigned long *)data = sc->rc_code->value;
+	    break;
+	case RCRECV_READ_CODE_INFO:
+#ifdef DEBUG
+		uprintf("ioctl(read_code_info, struct {%lu,%u,%u})\n",
+			sc->rc_code->value,
+			sc->rc_code->bit_length,
+			sc->rc_code->proto);
+#endif
+	    *(struct rcrecv_code *)data = *(sc->rc_code);
 	    break;
 	default:
+#ifdef DEBUG
+		uprintf("ioctl(UNDEFINED)\n");
+#endif
 	    error = ENOTTY;
 	    break;
     }

@@ -63,6 +63,7 @@ static protocol proto[] = {
     { 320, {36,1},  {1,2},  {2,1},  true }   // protocol 12 (SM5212)
 };
 
-#define RCRECV_READ_CODE _IOR('R', 10, unsigned long)
+#define RCRECV_READ_CODE      _IOR('R', 10, unsigned long)
+#define RCRECV_READ_CODE_INFO _IOR('R', 11, struct rcrecv_code)
 
 #endif /* _RCRECV_KMOD_H_ */
