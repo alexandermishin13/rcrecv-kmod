@@ -415,17 +415,18 @@ rcrecv_read(struct cdev *cdev, struct uio *uio, int ioflag __unused)
     struct rcrecv_softc *sc = cdev->si_drv1;
     struct rcrecv_code *rcc = sc->rc_code;
 
-    unsigned long value = rcc->value;
+    unsigned long val;
     size_t len = 0;
     size_t i;
-    size_t amount;
+    size_t amnt;
     char *dest;
     int error;
     off_t uio_offset_saved;
 
-    // Check the same condition as for receiving a code
+    /* Check the same condition as for receiving a code */
     if (rcc->bit_length >= sc->minimal_bit_length)
     {
+	val = rcc->value;
 	len = rcc->bit_length;
 	len >>= 2;
 	if (rcc->bit_length & 0x3)
@@ -435,29 +436,31 @@ rcrecv_read(struct cdev *cdev, struct uio *uio, int ioflag __unused)
 	*dest = '\n';
 
 	for (i = 0; i < len; i++) {
-	    *--dest = '0' + (value & 0xf);
+	    *--dest = '0' + (val & 0xf);
 	    if (*dest > '9')
 		*dest += 'a' - '9' - 1;
-	    value >>= 4;
+	    val >>= 4;
 	}
+
+	amnt = MIN(uio->uio_resid,
+		(len + 1 - uio->uio_offset > 0) ?
+		 len + 1 - uio->uio_offset : 0);
+
+	uio_offset_saved = uio->uio_offset;
+	error = uiomove(sc->received_code, amnt, uio);
+	uio->uio_offset = uio_offset_saved;
+
+	if (error != 0)
+	    uprintf("uiomove failed!\n");
+	else
+	    rcc->bit_length = 0;
+
+	return (error);
     }
-    else {
-	dest = sc->received_code;
-	*dest = '\n';
-    }
-
-    amount = MIN(uio->uio_resid,
-	    (len + 1 - uio->uio_offset > 0) ?
-	     len + 1 - uio->uio_offset : 0);
-
-    uio_offset_saved = uio->uio_offset;
-    error = uiomove(sc->received_code, amount, uio);
-    uio->uio_offset = uio_offset_saved;
-
-    if (error != 0)
-	uprintf("uiomove failed!\n");
-
-    return (error);
+    else
+    {
+	return (0);
+    } // if (rcc->bit_length >= sc->minimal_bit_length)
 }
 
 static int
