@@ -260,6 +260,8 @@ rcrecv_detach(device_t dev)
     if (sc->pin != NULL)
 	gpiobus_release_pin(GPIO_GET_BUS(sc->pin->dev), sc->pin->pin);
 
+    free(sc->rc_code, M_RCRECVCODE);
+
     /* Destroy the tm1637 cdev. */
     if (sc->cdev != NULL)
 	destroy_dev(sc->cdev);
@@ -433,7 +435,7 @@ rcrecv_read(struct cdev *cdev, struct uio *uio, int ioflag __unused)
 	    len++;
 
 	dest = sc->received_code + len;
-	*dest = '\n';
+//	*dest = '\n';
 
 	for (i = 0; i < len; i++) {
 	    *--dest = '0' + (val & 0xf);
@@ -443,8 +445,8 @@ rcrecv_read(struct cdev *cdev, struct uio *uio, int ioflag __unused)
 	}
 
 	amnt = MIN(uio->uio_resid,
-		(len + 1 - uio->uio_offset > 0) ?
-		 len + 1 - uio->uio_offset : 0);
+		(len - uio->uio_offset > 0) ?
+		 len - uio->uio_offset : 0);
 
 	uio_offset_saved = uio->uio_offset;
 	error = uiomove(sc->received_code, amnt, uio);
@@ -493,7 +495,7 @@ rcrecv_ioctl(struct cdev *cdev, u_long cmd, caddr_t data, int fflag, struct thre
 	    break;
 	default:
 #ifdef DEBUG
-		uprintf("ioctl(UNDEFINED)\n");
+		uprintf("Undeclared ioctl(0x%lx)\n", cmd);
 #endif
 	    error = ENOTTY;
 	    break;
