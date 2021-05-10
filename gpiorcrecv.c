@@ -101,6 +101,7 @@ struct rcrecv_softc {
     size_t		 count_change;
     size_t		 minimal_bit_length;
     size_t		 received_delay;
+    uint8_t		 receive_tolerance;
     struct cdev		*cdev;
     size_t		 timings[RCSWITCH_MAX_CHANGES];
 };
@@ -127,6 +128,32 @@ static struct cdevsw rcrecv_cdevsw = {
     .d_name = RCRECV_CDEV_NAME,
 };
 
+/*
+ * Sysctl parameter: tolerance
+ */
+static int
+rcrecv_tolerance_sysctl(SYSCTL_HANDLER_ARGS)
+{
+    struct rcrecv_softc *sc = arg1;
+    uint8_t tolerance = sc->receive_tolerance;
+    int error;
+
+    error = SYSCTL_OUT(req, &tolerance, sizeof(tolerance));
+    if (error != 0 || req->newptr == NULL)
+	return (error);
+
+    error = SYSCTL_IN(req, &tolerance, sizeof(tolerance));
+    if (error != 0)
+	return (error);
+
+    if (tolerance > 100)
+	return (EINVAL);
+
+    sc->receive_tolerance = tolerance;
+
+    return (0);
+}
+
 static inline unsigned int
 diff(int A, int B)
 {
@@ -141,7 +168,7 @@ rcrecv_receive_protocol(struct rcrecv_softc *sc, const size_t i)
     //Assuming the longer pulse length is the pulse captured in timings[0]
     const size_t sync_length =  ((p->sync_factor.low) > (p->sync_factor.high)) ? (p->sync_factor.low) : (p->sync_factor.high);
     const size_t delay = sc->timings[0] / sync_length;
-    const size_t delay_tolerance = delay * RECEIVE_TOLERANCE / 100;
+    const size_t delay_tolerance = delay * sc->receive_tolerance / 100;
 
     const size_t first_timing = (p->inverted) ? 2 : 1;
 
@@ -305,7 +332,12 @@ rcrecv_attach(device_t dev)
 	CTLFLAG_RD,
 	&sc->rc_code->proto, 0, "Received code protocol");
 
+    SYSCTL_ADD_PROC(ctx, tree, OID_AUTO, "tolerance",
+	CTLTYPE_U8 | CTLFLAG_RW | CTLFLAG_MPSAFE | CTLFLAG_ANYBODY, sc, 0,
+	&rcrecv_tolerance_sysctl, "CU", "Set tolerance for received signals, %");
+
     sc->minimal_bit_length = 7;
+    sc->receive_tolerance = RECEIVE_TOLERANCE;
 
 #ifdef FDT
     /* Try to configure our pin from fdt data on fdt-based systems. */
