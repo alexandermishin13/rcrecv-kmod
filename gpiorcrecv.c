@@ -512,13 +512,13 @@ rcrecv_ioctl(struct cdev *cdev, u_long cmd, caddr_t data, int fflag, struct thre
     switch (cmd) {
 	case RCRECV_READ_CODE:
 #ifdef DEBUG
-		uprintf("ioctl(read_code, %lu)\n", sc->rc_code->value);
+		uprintf("ioctl(read_code, 0x%lx)\n", sc->rc_code->value);
 #endif
 	    *(unsigned long *)data = sc->rc_code->value;
 	    break;
 	case RCRECV_READ_CODE_INFO:
 #ifdef DEBUG
-		uprintf("ioctl(read_code_info, struct {%lu,%u,%u})\n",
+		uprintf("ioctl(read_code_info, struct {0x%lx,%u,%u})\n",
 			sc->rc_code->value,
 			sc->rc_code->bit_length,
 			sc->rc_code->proto);
