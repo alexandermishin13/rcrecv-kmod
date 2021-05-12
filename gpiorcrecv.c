@@ -63,6 +63,10 @@ __FBSDID("$FreeBSD$");
 #include <dev/ofw/ofw_bus.h>
 //#include <dev/ofw/ofw_bus_subr.h>
 
+#include <sys/mutex.h>
+#include <sys/selinfo.h>
+#include <sys/poll.h>
+
 static struct ofw_compat_data compat_data[] = {
     {"rcrecv",   true},
     {NULL,       false}
@@ -72,7 +76,17 @@ OFWBUS_PNP_INFO(compat_data);
 SIMPLEBUS_PNP_INFO(compat_data);
 #endif
 
-#define NELEMS(x) (sizeof(x) / sizeof((x)[0]))
+#define NELEMS(x) \
+    (sizeof(x) / sizeof((x)[0]))
+#define MTX_INIT(sc) \
+    mtx_init(&(sc)->lock, "RCRecv mtx", NULL, MTX_DEF)
+#define MTX_DESTROY(sc) \
+    mtx_destroy(&(sc)->lock)
+#define MTX_LOCK(sc) \
+    mtx_lock(&(sc)->lock)
+#define MTX_UNLOCK(sc) \
+    mtx_unlock(&(sc)->lock)
+
 /* Use the first/only configured pin. */
 #define	PIN_IDX 0
 
@@ -97,13 +111,32 @@ struct rcrecv_softc {
     char		 received_code[sizeof(unsigned long) + 1];
     struct rcrecv_code	*rc_code;
     long		 last_evtime;
-    size_t		 count_repeat;
-    size_t		 count_change;
-    size_t		 minimal_bit_length;
+    size_t		 repeats_count;
+    size_t		 changes_count;
+    size_t		 changes_count_min;
     size_t		 received_delay;
     uint8_t		 receive_tolerance;
+    struct mtx		 lock;
     struct cdev		*cdev;
+    struct selinfo	 rsel;
     size_t		 timings[RCSWITCH_MAX_CHANGES];
+};
+
+static d_open_t		rcrecv_open;
+static d_close_t	rcrecv_close;
+static d_read_t		rcrecv_read;
+static d_write_t	rcrecv_write;
+static d_ioctl_t	rcrecv_ioctl;
+static d_poll_t		rcrecv_poll;
+static d_kqfilter_t	rcrecv_kqfilter;
+static int		rcrecv_kqevent(struct knote *, long);
+static void		rcrecv_kqdetach(struct knote *);
+
+static struct filterops rcrecv_filterops = {
+    .f_isfd =		1,
+    .f_attach =		NULL,
+    .f_detach =		rcrecv_kqdetach,
+    .f_event =		rcrecv_kqevent,
 };
 
 /* Function prototypes */
@@ -111,21 +144,17 @@ static int		rcrecv_probe(device_t);
 static int		rcrecv_attach(device_t);
 static int		rcrecv_detach(device_t);
 
-static d_open_t		rcrecv_open;
-static d_close_t	rcrecv_close;
-static d_read_t		rcrecv_read;
-static d_write_t	rcrecv_write;
-static d_ioctl_t	rcrecv_ioctl;
-
 /* Character device entry points */
 static struct cdevsw rcrecv_cdevsw = {
-    .d_version = D_VERSION,
-    .d_open = rcrecv_open,
-    .d_close = rcrecv_close,
-    .d_read = rcrecv_read,
-    .d_write = rcrecv_write,
-    .d_ioctl = rcrecv_ioctl,
-    .d_name = RCRECV_CDEV_NAME,
+    .d_version =	D_VERSION,
+    .d_open =		rcrecv_open,
+    .d_close =		rcrecv_close,
+    .d_read =		rcrecv_read,
+    .d_write =		rcrecv_write,
+    .d_ioctl =		rcrecv_ioctl,
+    .d_poll =		rcrecv_poll,
+    .d_kqfilter =	rcrecv_kqfilter,
+    .d_name =		RCRECV_CDEV_NAME,
 };
 
 /*
@@ -172,7 +201,7 @@ rcrecv_receive_protocol(struct rcrecv_softc *sc, const size_t i)
 
     const size_t first_timing = (p->inverted) ? 2 : 1;
 
-    for (size_t i = first_timing; i < sc->count_change - 1; i += 2)
+    for (size_t i = first_timing; i < sc->changes_count - 1; i += 2)
     {
 	code <<= 1;
 	if (diff(sc->timings[i], delay * p->zero.high) < delay_tolerance &&
@@ -189,11 +218,14 @@ rcrecv_receive_protocol(struct rcrecv_softc *sc, const size_t i)
 	    // Failed
 	    return false; 
 	}
-    } // for (size_t i = 1; i < sc->count_change - 1;
+    } // for (size_t i = 1; i < sc->changes_count - 1;
 
-    if (sc->count_change > sc->minimal_bit_length) {    // ignore very short transmissions: no device sends them, so this must be noise
+    /* ignore very short transmissions: no device sends them,
+       so this must be noise
+     */
+    if (sc->changes_count > sc->changes_count_min) {
 	sc->rc_code->value = code;
-	sc->rc_code->bit_length = (sc->count_change - 1) / 2;
+	sc->rc_code->bit_length = (sc->changes_count - 1) / 2;
 	sc->received_delay = delay;
 	sc->rc_code->proto = i + 1;
     }
@@ -221,9 +253,9 @@ rcrecv_ihandler(void *arg)
 	   here that a sender will send the signal multiple times,
 	   with roughly the same gap between them).
 	*/
-	if ((sc->count_repeat == 0) || (diff(duration, sc->timings[0]) < 200)) {
-	    sc->count_repeat++;
-	    if (sc->count_repeat == 2) {
+	if ((sc->repeats_count == 0) || (diff(duration, sc->timings[0]) < 200)) {
+	    sc->repeats_count++;
+	    if (sc->repeats_count == 2) {
 		for(size_t i = 0; i < NELEMS(proto); i++) {
 		    if (rcrecv_receive_protocol(sc, i))
 		    {
@@ -234,20 +266,20 @@ rcrecv_ihandler(void *arg)
 			break;
 		    }
 		}
-		sc->count_repeat = 0;
+		sc->repeats_count = 0;
 	    }
 	}
 
-	sc->count_change = 0;
-    } //if (duration > SEPARATION_LIMIT)
+	sc->changes_count = 0;
+    } // if (duration > SEPARATION_LIMIT)
 
     /* Detect overflow */
-    if (sc->count_change >= RCSWITCH_MAX_CHANGES) {
-	sc->count_change = 0;
-	sc->count_repeat = 0;
+    if (sc->changes_count >= RCSWITCH_MAX_CHANGES) {
+	sc->changes_count = 0;
+	sc->repeats_count = 0;
     }
 
-    sc->timings[sc->count_change++] = duration;
+    sc->timings[sc->changes_count++] = duration;
     sc->last_evtime = evtime;
 }
 
@@ -287,6 +319,9 @@ rcrecv_detach(device_t dev)
     if (sc->pin != NULL)
 	gpiobus_release_pin(GPIO_GET_BUS(sc->pin->dev), sc->pin->pin);
 
+    knlist_destroy(&sc->rsel.si_note);
+    seldrain(&sc->rsel);
+    MTX_DESTROY(sc);
     free(sc->rc_code, M_RCRECVCODE);
 
     /* Destroy the tm1637 cdev. */
@@ -304,9 +339,10 @@ rcrecv_attach(device_t dev)
 
     struct rcrecv_softc *sc = device_get_softc(dev);
     sc->dev = dev;
-
     sc->rc_code = malloc(sizeof(*sc->rc_code), M_RCRECVCODE, M_WAITOK | M_ZERO);
 
+    MTX_INIT(sc);
+    knlist_init_mtx(&sc->rsel.si_note, NULL);
 
     struct sysctl_ctx_list	*ctx;
     struct sysctl_oid		*tree_node;
@@ -336,7 +372,7 @@ rcrecv_attach(device_t dev)
 	CTLTYPE_U8 | CTLFLAG_RW | CTLFLAG_MPSAFE | CTLFLAG_ANYBODY, sc, 0,
 	&rcrecv_tolerance_sysctl, "CU", "Set tolerance for received signals, %");
 
-    sc->minimal_bit_length = 7;
+    sc->changes_count_min = 7;
     sc->receive_tolerance = RECEIVE_TOLERANCE;
 
 #ifdef FDT
@@ -458,7 +494,7 @@ rcrecv_read(struct cdev *cdev, struct uio *uio, int ioflag __unused)
     off_t uio_offset_saved;
 
     /* Check the same condition as for receiving a code */
-    if (rcc->bit_length >= sc->minimal_bit_length)
+    if (rcc->bit_length >= sc->changes_count_min)
     {
 	val = rcc->value;
 	len = rcc->bit_length;
@@ -467,7 +503,6 @@ rcrecv_read(struct cdev *cdev, struct uio *uio, int ioflag __unused)
 	    len++;
 
 	dest = sc->received_code + len;
-//	*dest = '\n';
 
 	for (i = 0; i < len; i++) {
 	    *--dest = '0' + (val & 0xf);
@@ -476,13 +511,16 @@ rcrecv_read(struct cdev *cdev, struct uio *uio, int ioflag __unused)
 	    val >>= 4;
 	}
 
+//	MTX_LOCK(sc);
+	uio_offset_saved = uio->uio_offset;
+
 	amnt = MIN(uio->uio_resid,
 		(len - uio->uio_offset > 0) ?
 		 len - uio->uio_offset : 0);
-
-	uio_offset_saved = uio->uio_offset;
 	error = uiomove(sc->received_code, amnt, uio);
+
 	uio->uio_offset = uio_offset_saved;
+//	MTX_UNLOCK(sc);
 
 	if (error != 0)
 	    uprintf("uiomove failed!\n");
@@ -494,7 +532,7 @@ rcrecv_read(struct cdev *cdev, struct uio *uio, int ioflag __unused)
     else
     {
 	return (0);
-    } // if (rcc->bit_length >= sc->minimal_bit_length)
+    } // if (rcc->bit_length >= sc->changes_count_min)
 }
 
 static int
@@ -515,6 +553,7 @@ rcrecv_ioctl(struct cdev *cdev, u_long cmd, caddr_t data, int fflag, struct thre
 		uprintf("ioctl(read_code, 0x%lx)\n", sc->rc_code->value);
 #endif
 	    *(unsigned long *)data = sc->rc_code->value;
+	    sc->rc_code->bit_length = 0;
 	    break;
 	case RCRECV_READ_CODE_INFO:
 #ifdef DEBUG
@@ -524,6 +563,7 @@ rcrecv_ioctl(struct cdev *cdev, u_long cmd, caddr_t data, int fflag, struct thre
 			sc->rc_code->proto);
 #endif
 	    *(struct rcrecv_code *)data = *(sc->rc_code);
+	    sc->rc_code->bit_length = 0;
 	    break;
 	default:
 #ifdef DEBUG
@@ -534,6 +574,68 @@ rcrecv_ioctl(struct cdev *cdev, u_long cmd, caddr_t data, int fflag, struct thre
     }
 
     return (error);
+}
+
+static int
+rcrecv_poll(struct cdev *dev, int events, struct thread *td)
+{
+    int revents = 0;
+    struct rcrecv_softc *sc = dev->si_drv1;
+
+/*
+    if (events & (POLLIN | POLLRDNORM)) {
+	if (sc->rc_code->bit_length > (sc->changes_count_min - 1) / 2) {
+	    revents = events & (POLLIN | POLLRDNORM);
+	}
+	else {
+	    selrecord(td, &sc->rsel);
+	}
+    }
+*/
+
+//    MTX_LOCK(sc);
+    if (sc->rc_code->bit_length == 24)
+	revents = events & (POLLIN | POLLRDNORM);
+    else
+	if (events & (POLLIN | POLLRDNORM))
+	    selrecord(td, &sc->rsel);
+//    MTX_UNLOCK(sc);
+
+
+    return (revents);
+}
+
+static int
+rcrecv_kqfilter(struct cdev *dev, struct knote *kn)
+{
+    struct rcrecv_softc *sc = dev->si_drv1;
+
+    switch (kn->kn_filter) {
+    case EVFILT_READ:
+	kn->kn_fop = &rcrecv_filterops;
+	kn->kn_hook = sc;
+	knlist_add(&sc->rsel.si_note, kn, 0);
+	return (0);
+    default:
+	return (EINVAL);
+    }
+}
+
+static int
+rcrecv_kqevent(struct knote *kn, long hint)
+{
+    struct rcrecv_softc *sc = kn->kn_hook;
+
+    kn->kn_data = sc->rc_code->bit_length;
+    return (kn->kn_data == 24);
+}
+
+static void
+rcrecv_kqdetach(struct knote *kn)
+{
+    struct rcrecv_softc *sc = kn->kn_hook;
+
+    knlist_remove(&sc->rsel.si_note, kn, 0);
 }
 
 /* Driver bits */
