@@ -1,41 +1,45 @@
-#include <stdio.h>
-#include <stdlib.h>
+#include <sys/event.h>
 #include <err.h>
 #include <fcntl.h>
+#include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
-#include <sys/types.h>
-#include <sys/event.h>
 
-extern char * __progname;
-
-int main(int argc, char * argv[])
+int
+main(int argc, char **argv)
 {
+    struct kevent event;    /* Event we want to monitor */
+    struct kevent tevent;   /* Event triggered */
+    int kq, fd, ret;
 
-    int fd, kq;
-    struct kevent ke;
+    if (argc != 2)
+        err(EXIT_FAILURE, "Usage: %s path\n", argv[0]);
+    fd = open(argv[1], O_RDONLY);
+    if (fd == -1)
+        err(EXIT_FAILURE, "Failed to open '%s'", argv[1]);
 
-    if ( argc < 2 )
-	errx(1,"usage: %s file",__progname);
+    /* Create kqueue. */
+    kq = kqueue();
+    if (kq == -1)
+        err(EXIT_FAILURE, "kqueue() failed");
 
-    if ( ( fd = open(argv[1], O_RDONLY, NULL) ) == NULL )
-	err(1,"%s:%i",__FILE__,__LINE__);
+    /* Initialize kevent structure. */
+    EV_SET(&event, fd, EVFILT_VNODE, EV_ADD | EV_CLEAR, NOTE_WRITE,
+        0, NULL);
+    /* Attach event to the kqueue. */
+    ret = kevent(kq, &event, 1, NULL, 0, NULL);
+    if (ret == -1)
+        err(EXIT_FAILURE, "kevent register");
+    if (event.flags & EV_ERROR)
+        errx(EXIT_FAILURE, "Event error: %s", strerror(event.data));
 
-    if ( ( kq = kqueue() ) == -1 )
-	err(1,"%s:%i",__FILE__,__LINE__);
-
-    bzero(&ke,sizeof(ke));
-
-    EV_SET(&ke, fd, EVFILT_VNODE, EV_ADD|EV_CLEAR, NOTE_WRITE, 0, NULL);
-
-    if ( kevent(kq, &ke, 1, NULL, 0, NULL) == -1 )
-	err(1,"%s:%i",__FILE__,__LINE__);
-
-    bzero(&ke,sizeof(ke));
-
-    while(1)
-	if ( kevent(kq, NULL, 0, &ke, 1, NULL) != -1 )
-	    printf("A write occurred on the file.n");
-
-    return 0;
+    for (;;) {
+        /* Sleep until something happens. */
+        ret = kevent(kq, NULL, 0, &tevent, 1, NULL);
+        if (ret == -1) {
+            err(EXIT_FAILURE, "kevent wait");
+        } else if (ret > 0) {
+            printf("Something was written in '%s'\n", argv[1]);
+        }
+    }
 }
-
