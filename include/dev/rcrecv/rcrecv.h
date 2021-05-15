@@ -33,6 +33,7 @@ struct rcrecv_code {
     unsigned long value;
     size_t bit_length;
     size_t proto;
+    bool ready;
 };
 
 typedef struct {

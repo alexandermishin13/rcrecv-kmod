@@ -4,10 +4,17 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/time.h>
 
 int
 main(int argc, char **argv)
 {
+    struct timespec timeout;
+//    int waitms = 500;
+//    timeout.tv_sec = waitms / 1000;
+//    timeout.tv_nsec = (waitms % 1000) * 1000 * 1000;
+    timeout.tv_sec = 0;
+    timeout.tv_nsec = 0;
     struct kevent event;    /* Event we want to monitor */
     struct kevent tevent;   /* Event triggered */
     int kq, fd, ret;
@@ -24,8 +31,7 @@ main(int argc, char **argv)
         err(EXIT_FAILURE, "kqueue() failed");
 
     /* Initialize kevent structure. */
-    EV_SET(&event, fd, EVFILT_VNODE, EV_ADD | EV_CLEAR, NOTE_WRITE,
-        0, NULL);
+    EV_SET(&event, fd, EVFILT_READ, EV_ADD | EV_CLEAR, 0, 0, NULL);
     /* Attach event to the kqueue. */
     ret = kevent(kq, &event, 1, NULL, 0, NULL);
     if (ret == -1)
@@ -35,7 +41,7 @@ main(int argc, char **argv)
 
     for (;;) {
         /* Sleep until something happens. */
-        ret = kevent(kq, NULL, 0, &tevent, 1, NULL);
+        ret = kevent(kq, NULL, 0, &tevent, 1, &timeout);
         if (ret == -1) {
             err(EXIT_FAILURE, "kevent wait");
         } else if (ret > 0) {
