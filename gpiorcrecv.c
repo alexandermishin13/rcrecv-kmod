@@ -109,6 +109,7 @@ struct rcrecv_softc {
     size_t		 received_delay;
     uint8_t		 receive_tolerance;
     bool		 poll_sel;
+    bool		 kq_sel;
     struct mtx		 mtx;
     struct cdev		*cdev;
     struct selinfo	 rsel;
@@ -121,7 +122,6 @@ static d_read_t		rcrecv_read;
 static d_write_t	rcrecv_write;
 static d_ioctl_t	rcrecv_ioctl;
 static d_poll_t		rcrecv_poll;
-/*
 static d_kqfilter_t	rcrecv_kqfilter;
 static int		rcrecv_kqevent(struct knote *, long);
 static void		rcrecv_kqdetach(struct knote *);
@@ -132,7 +132,6 @@ static struct filterops rcrecv_filterops = {
     .f_detach =		rcrecv_kqdetach,
     .f_event =		rcrecv_kqevent,
 };
-*/
 
 /* Function prototypes */
 static int		rcrecv_probe(device_t);
@@ -149,7 +148,7 @@ static struct cdevsw rcrecv_cdevsw = {
     .d_write =		rcrecv_write,
     .d_ioctl =		rcrecv_ioctl,
     .d_poll =		rcrecv_poll,
-    .d_kqfilter =	NULL,
+    .d_kqfilter =	rcrecv_kqfilter,
     .d_name =		RCRECV_CDEV_NAME,
 };
 
@@ -380,6 +379,7 @@ rcrecv_attach(device_t dev)
     sc->changes_count_min = 7;
     sc->receive_tolerance = RECEIVE_TOLERANCE;
     sc->poll_sel = true;
+    sc->kq_sel = true;
 
 #ifdef FDT
     /* Try to configure our pin from fdt data on fdt-based systems. */
@@ -582,7 +582,7 @@ rcrecv_poll(struct cdev *dev, int events, struct thread *td)
     int revents = 0;
     struct rcrecv_softc *sc = dev->si_drv1;
 
-//    MTX_LOCK(sc);
+    mtx_lock(&sc->mtx);
     if (events & (POLLIN | POLLRDNORM)) {
 	if (!sc->poll_sel) {
 	    sc->poll_sel = true;
@@ -591,7 +591,7 @@ rcrecv_poll(struct cdev *dev, int events, struct thread *td)
 	else
 	    selrecord(td, &sc->rsel);
     }
-//    MTX_UNLOCK(sc);
+    mtx_unlock(&sc->mtx);
 
     return (revents);
 }
@@ -609,7 +609,6 @@ rcrecv_notify(struct rcrecv_softc *sc)
     KNOTE_LOCKED(&sc->rsel.si_note, 0);
 }
 
-/*
 static int
 rcrecv_kqfilter(struct cdev *dev, struct knote *kn)
 {
@@ -619,7 +618,9 @@ rcrecv_kqfilter(struct cdev *dev, struct knote *kn)
     case EVFILT_READ:
 	kn->kn_fop = &rcrecv_filterops;
 	kn->kn_hook = sc;
-	knlist_add(&sc->rsel.si_note, kn, 0);
+	mtx_lock(&sc->mtx);
+	knlist_add(&sc->rsel.si_note, kn, 1);
+	mtx_unlock(&sc->mtx);
 	break;
     default:
 	return (EINVAL);
@@ -633,13 +634,21 @@ static int
 rcrecv_kqevent(struct knote *kn, long hint)
 {
     struct rcrecv_softc *sc = kn->kn_hook;
+    size_t len;
 
-    size_t len = sc->rc_code->bit_length;
-    len >>= 2;
-    if (sc->rc_code->bit_length & 0x3)
-	len++;
-    kn->kn_data = len;
-    return (sc->poll_sel);
+    mtx_assert(&sc->mtx, MA_OWNED);
+
+    if (sc->rc_code->ready) {
+	len = sc->rc_code->bit_length;
+	len >>= 2;
+	if (sc->rc_code->bit_length & 0x3)
+	    len++;
+
+	kn->kn_data = len;
+	return (1);
+    }
+    else
+	return (0);
 }
 
 static void
@@ -649,7 +658,6 @@ rcrecv_kqdetach(struct knote *kn)
 
     knlist_remove(&sc->rsel.si_note, kn, 0);
 }
-*/
 
 /* Driver bits */
 static device_method_t rcrecv_methods[] = {

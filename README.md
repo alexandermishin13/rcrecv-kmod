@@ -40,5 +40,8 @@ fdt_overlays="your,other,overlays,sun8i-h3-rcrecv-gpio"
 * Gets the code from a remote control;
 * Sets kernel variables;
 * Creates a device file and read a last code from it;
+* ioctl() calls for get a code and details of code;
+* Access to events by poll();
+* Access to events by kqueue();
 
 Under early development

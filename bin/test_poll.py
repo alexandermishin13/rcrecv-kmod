@@ -10,8 +10,8 @@ p = poll()
 p.register(file.fileno(), POLLIN)
 
 while True:
-    events = p.poll(2000)
+    events = p.poll(10000)
     for e in events:
         print(e)
         # Read data, so that the event goes away?
-        print(file.readline(6))
+        print(file.readline())
