@@ -5,19 +5,22 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/time.h>
+#include <sys/ioctl.h>
+#include <dev/rcrecv/rcrecv.h>
 
 int
 main(int argc, char **argv)
 {
     struct timespec timeout;
-//    int waitms = 500;
-//    timeout.tv_sec = waitms / 1000;
-//    timeout.tv_nsec = (waitms % 1000) * 1000 * 1000;
-    timeout.tv_sec = 0;
-    timeout.tv_nsec = 0;
+    int waitms = 10000;
+    timeout.tv_sec = waitms / 1000;
+    timeout.tv_nsec = (waitms % 1000) * 1000 * 1000;
+//    timeout.tv_sec = 0;
+//    timeout.tv_nsec = 0;
     struct kevent event;    /* Event we want to monitor */
     struct kevent tevent;   /* Event triggered */
     int kq, fd, ret;
+    unsigned long code;
 
     if (argc != 2)
         err(EXIT_FAILURE, "Usage: %s path\n", argv[0]);
@@ -45,7 +48,8 @@ main(int argc, char **argv)
         if (ret == -1) {
             err(EXIT_FAILURE, "kevent wait");
         } else if (ret > 0) {
-            printf("Something was written in '%s'\n", argv[1]);
+            ioctl(fd, RCRECV_READ_CODE, &code);
+            printf("Received code: %lx\n", code);
         }
     }
 }
