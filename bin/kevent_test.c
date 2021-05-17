@@ -6,28 +6,50 @@
 #include <string.h>
 #include <sys/time.h>
 #include <sys/ioctl.h>
+#include <stdbool.h>
+#include <unistd.h>
 #include <dev/rcrecv/rcrecv.h>
+
+void
+usage()
+{
+	fprintf(stderr, "usage: %s [-f ctldev] [-m method] [-s] [-n] "
+	    "[-t timeout] pin intr-config [pin intr-config ...]\n\n",
+	    getprogname());
+	fprintf(stderr, "Possible options for method:\n\n");
+}
 
 int
 main(int argc, char **argv)
 {
+    int ch;
+    char *file = "/dev/rcrecv";
+
     struct timespec timeout;
     int waitms = 10000;
     timeout.tv_sec = waitms / 1000;
     timeout.tv_nsec = (waitms % 1000) * 1000 * 1000;
-//    timeout.tv_sec = 0;
-//    timeout.tv_nsec = 0;
-    struct kevent event;    /* Event we want to monitor */
+
+    struct kevent event;    /* Event monitored */
     struct kevent tevent;   /* Event triggered */
     int kq, fd, ret;
+    struct rcrecv_code rcc;
     unsigned long code;
 
-    if (argc != 2)
-        err(EXIT_FAILURE, "Usage: %s path\n", argv[0]);
-    fd = open(argv[1], O_RDONLY);
-    if (fd == -1)
-        err(EXIT_FAILURE, "Failed to open '%s'", argv[1]);
+    while ((ch = getopt(argc, argv, "f:")) != -1) {
+	switch (ch) {
+	case 'f':
+	    file = optarg;
+	    break;
+	default:
+	    usage();
+	    return EXIT_FAILURE;
+	}
+    }
+    argv += optind;
+    argc -= optind;
 
+    fd = open(file, O_RDONLY);
     /* Create kqueue. */
     kq = kqueue();
     if (kq == -1)
@@ -43,13 +65,13 @@ main(int argc, char **argv)
         errx(EXIT_FAILURE, "Event error: %s", strerror(event.data));
 
     for (;;) {
-        /* Sleep until something happens. */
+        /* Sleep until a code received */
         ret = kevent(kq, NULL, 0, &tevent, 1, &timeout);
         if (ret == -1) {
             err(EXIT_FAILURE, "kevent wait");
         } else if (ret > 0) {
-            ioctl(fd, RCRECV_READ_CODE, &code);
-            printf("Received code: %lx\n", code);
+            ioctl(fd, RCRECV_READ_CODE_INFO, &rcc);
+            printf("Received code: %lx\n", rcc.value);
         }
     }
 }

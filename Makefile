@@ -5,6 +5,8 @@
 KMOD=gpiorcrecv
 SRCS=gpiorcrecv.c
 
+SUBDIR=include
+
 SRCS+=	\
 	bus_if.h \
 	device_if.h \

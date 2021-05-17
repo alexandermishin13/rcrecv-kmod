@@ -518,7 +518,7 @@ rcrecv_read(struct cdev *cdev, struct uio *uio, int ioflag __unused)
 	val >>= 4;
     }
 
-//	MTX_LOCK(sc);
+    mtx_lock(&sc->mtx);
     uio_offset_saved = uio->uio_offset;
 
     amnt = MIN(uio->uio_resid,
@@ -527,7 +527,7 @@ rcrecv_read(struct cdev *cdev, struct uio *uio, int ioflag __unused)
     error = uiomove(sc->received_code, amnt, uio);
 
     uio->uio_offset = uio_offset_saved;
-//	MTX_UNLOCK(sc);
+    mtx_unlock(&sc->mtx);
 
     if (error != 0)
 	uprintf("uiomove failed!\n");
@@ -547,23 +547,21 @@ static int
 rcrecv_ioctl(struct cdev *cdev, u_long cmd, caddr_t data, int fflag, struct thread *td)
 {
     struct rcrecv_softc *sc = cdev->si_drv1;
+    struct rcrecv_code *rcc = sc->rc_code;
     int error = 0;
 
     switch (cmd) {
 	case RCRECV_READ_CODE:
-#ifdef DEBUG
-		uprintf("ioctl(read_code, 0x%lx)\n", sc->rc_code->value);
-#endif
-	    *(unsigned long *)data = sc->rc_code->value;
+	    if (rcc->ready) {
+		rcc->ready = false;
+		*(unsigned long *)data = rcc->value;
+	    }
+	    else
+		data = NULL;
 	    break;
 	case RCRECV_READ_CODE_INFO:
-#ifdef DEBUG
-		uprintf("ioctl(read_code_info, struct {0x%lx,%u,%u})\n",
-			sc->rc_code->value,
-			sc->rc_code->bit_length,
-			sc->rc_code->proto);
-#endif
-	    *(struct rcrecv_code *)data = *(sc->rc_code);
+	    rcc->ready = false;
+	    *(struct rcrecv_code *)data = *rcc;
 	    break;
 	default:
 #ifdef DEBUG
