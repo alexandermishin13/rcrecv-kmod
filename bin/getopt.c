@@ -1,4 +1,4 @@
-#include <unistd.h>
+#include <getopt.h>
 #include <stddef.h>
 #include <limits.h>
 #include <stdlib.h>
@@ -47,10 +47,18 @@ main(int argc, char *argv[])
     char *end, *tmp;
     int opt;
 
+    int long_index =0;
+    static struct option long_options[] = {
+//        {"status", no_argument,       0, 'v' },
+        {"set",    required_argument, 0, 's' },
+        {"unset",  required_argument, 0, 'u' },
+        {0, 0, 0, 0}
+    };
+
     SLIST_INIT(&search_switch);
     node = SLIST_FIRST(&search_switch);
 
-    while ((opt = getopt(argc, argv, "s:u:")) != -1) {
+    while ((opt = getopt_long(argc, argv, "s:u:",long_options,&long_index)) != -1) {
 	switch (opt) {
 	case 's':
 	    node = add_rcc_entry(node);
