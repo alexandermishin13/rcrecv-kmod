@@ -12,17 +12,22 @@
 #include <unistd.h>
 #include <getopt.h>
 #include <signal.h>
+#include <libgpio.h>
 
 #include <dev/rcrecv/rcrecv.h>
 
-int fd;
+#define DEVICE_GPIOC  "/dev/gpioc0"
+#define DEVICE_RCRECV "/dev/rcrecv"
+
+int dev;
+gpio_handle_t gpioc;
 struct pidfh *pfh;
 bool background = false;
 
 typedef struct rcc_entry {
     unsigned long code;
-    unsigned int pin;
-    bool state;
+    gpio_pin_t pin;
+    char state;
     SLIST_ENTRY(rcc_entry) switches;
 } *rcc_entry_t;
 
@@ -54,8 +59,9 @@ termination_handler(int signum)
 	free(node);
     }
 
-    /* Close the device */
-    close(fd);
+    /* Close devices */
+    close(dev);
+    gpio_close(gpioc);
 
     /* Remove pidfile and exit */
     pidfile_remove(pfh);
@@ -103,7 +109,7 @@ search_rcc_entry(const unsigned long *code)
 
     SLIST_FOREACH(node, &search_switch, switches)
     {
-	printf("code: %lu, pin: %u, state: %u\n", node->code, node->pin, node->state);
+	printf("code: %lu, pin: %u, state: %c\n", node->code, node->pin, node->state);
 	if (node->code == *code) {
 	    tmpnode = node;
 	    break;
@@ -138,7 +144,8 @@ main(int argc, char **argv)
 {
     rcc_entry_t node;
     int opt;
-    char *dev_file = "/dev/rcrecv";
+    char *dev_rcrecv = DEVICE_RCRECV;
+    char *dev_gpio = DEVICE_GPIOC;
     char *end, *tmp;
 
     struct timespec timeout;
@@ -154,8 +161,10 @@ main(int argc, char **argv)
     static struct option long_options[] = {
 //        {"status", no_argument,       0, 'v' },
         {"device", required_argument, 0, 'd' },
+        {"gpio",   required_argument, 0, 'g' },
         {"set",    required_argument, 0, 's' },
         {"unset",  required_argument, 0, 'u' },
+        {"toggle", required_argument, 0, 't' },
         {"help",   required_argument, 0, 'h' },
         {0, 0, 0, 0}
     };
@@ -163,34 +172,23 @@ main(int argc, char **argv)
     SLIST_INIT(&search_switch);
     node = SLIST_FIRST(&search_switch);
 
-    while ((opt = getopt_long(argc, argv, "d:s:u:b",long_options,&long_index)) != -1) {
+    while ((opt = getopt_long(argc, argv, "d:s:t:u:b",long_options,&long_index)) != -1) {
 	switch (opt) {
 	case 'd':
-	    dev_file = optarg;
+	    dev_rcrecv = optarg;
 	    break;
 	case 'b':
 	    background = true;
 	    break;
 	case 's':
-	    node = add_rcc_entry(node);
-
-	    /* Get a code from the argument */
-	    tmp = strtok(optarg, ":");
-	    if ((tmp == NULL) || (tmp[0] == '-'))
-		errx(EXIT_FAILURE, "Wrong RC code value '%s': -%c <code>:<pin>\n", tmp, opt);
-	    node->code = strtoul(tmp, &end, 0);
-
-	    /* Get a pin number from the argument */
-	    tmp = strtok(NULL, ":");
-	    if (tmp == NULL)
-		errx(EXIT_FAILURE, "Wrong pin number '%s': -%c %lu:<pin>\n", tmp, opt, node->code);
-	    node->pin = strtoul(tmp, &end, 0);
-
-	    /* Set a pin state */
-	    node->state = true;
-	    break;
+	    /* FALLTHROUGH */
 	case 'u':
+	    /* FALLTHROUGH */
+	case 't':
 	    node = add_rcc_entry(node);
+
+	    /* Set a pin state */
+	    node->state = opt;
 
 	    /* Get a code from the argument */
 	    tmp = strtok(optarg, ":");
@@ -204,8 +202,6 @@ main(int argc, char **argv)
 		errx(EXIT_FAILURE, "Wrong pin number '%s': -%c %lu:<pin>\n", tmp, opt, node->code);
 	    node->pin = strtoul(tmp, &end, 0);
 
-	    /* Set a pin state */
-	    node->state = false;
 	    break;
 	case 'h':
 	    /* FALLTHROUGH */
@@ -221,8 +217,17 @@ main(int argc, char **argv)
     timeout.tv_sec = waitms / 1000;
     timeout.tv_nsec = (waitms % 1000) * 1000 * 1000;
 
-    fd = open(dev_file, O_RDONLY);
-    if (fd < 0) {
+    /* Open GPIO controller */
+    gpioc = gpio_open_device(dev_gpio);
+    //gpio_pin_output(handle, 16);
+    if (gpioc == GPIO_INVALID_HANDLE) {
+	perror("opening GPIO controller device");
+	exit(EXIT_FAILURE);
+    }
+
+    /* Open RCRecv device */
+    dev = open(dev_rcrecv, O_RDONLY);
+    if (dev < 0) {
 	perror("opening RC receiver device");
 	exit(EXIT_FAILURE);
     }
@@ -233,7 +238,7 @@ main(int argc, char **argv)
         err(EXIT_FAILURE, "kqueue() failed");
 
     /* Initialize kevent structure. */
-    EV_SET(&event, fd, EVFILT_READ, EV_ADD | EV_CLEAR, 0, 0, NULL);
+    EV_SET(&event, dev, EVFILT_READ, EV_ADD | EV_CLEAR, 0, 0, NULL);
     /* Attach event to the kqueue. */
     ret = kevent(kq, &event, 1, NULL, 0, NULL);
     if (ret == -1)
@@ -257,11 +262,22 @@ main(int argc, char **argv)
 	if (ret == -1) {
 	    err(EXIT_FAILURE, "kevent wait");
 	} else if (ret > 0) {
-	    ioctl(fd, RCRECV_READ_CODE_INFO, &rcc);
+	    ioctl(dev, RCRECV_READ_CODE_INFO, &rcc);
 	    printf("Received code: %lx\n", rcc.value);
 	    node = search_rcc_entry(&rcc.value);
 	    if (node != NULL) {
-		printf("Received code: %lx\n", rcc.value);
+		printf("Received code: %lx, pin: %u ", node->code, node->pin);
+		switch(node->state) {
+		case 's':
+		    gpio_pin_high(gpioc, node->pin);
+		    printf("is set\n");
+		case 'u':
+		    gpio_pin_low(gpioc, node->pin);
+		    printf("is unset\n");
+		case 't':
+		    gpio_pin_toggle(gpioc, node->pin);
+		    printf("is toggle\n");
+		}
 	    }
 	}
     }
