@@ -2,10 +2,10 @@
 
 .PATH:	${SRCTOP}/sys/dev/gpio/
 
-KMOD=gpiorcrecv
+KMOD=rcrecv
 SRCS=gpiorcrecv.c
 
-SUBDIR=include
+SUBDIR=include man
 
 SRCS+=	\
 	bus_if.h \
@@ -18,6 +18,6 @@ SRCS+=	\
 
 CFLAGS+=  -I. -I${SRCTOP}/sys/dev/gpio/
 #CFLAGS+=  -DFDT
-CFLAGS+=  -DDEBUG
+#CFLAGS+=  -DDEBUG
 
 .include <bsd.kmod.mk>
