@@ -109,7 +109,6 @@ struct rcrecv_softc {
     size_t		 received_delay;
     uint8_t		 receive_tolerance;
     bool		 poll_sel;
-    bool		 kq_sel;
     struct mtx		 mtx;
     struct cdev		*cdev;
     struct selinfo	 rsel;
@@ -379,7 +378,6 @@ rcrecv_attach(device_t dev)
     sc->changes_count_min = 7;
     sc->receive_tolerance = RECEIVE_TOLERANCE;
     sc->poll_sel = true;
-    sc->kq_sel = true;
 
 #ifdef FDT
     /* Try to configure our pin from fdt data on fdt-based systems. */
@@ -565,7 +563,7 @@ rcrecv_ioctl(struct cdev *cdev, u_long cmd, caddr_t data, int fflag, struct thre
 	    break;
 	default:
 #ifdef DEBUG
-		uprintf("Undeclared ioctl(0x%lx)\n", cmd);
+	    uprintf("Undeclared ioctl(0x%lx)\n", cmd);
 #endif
 	    error = ENOTTY;
 	    break;
