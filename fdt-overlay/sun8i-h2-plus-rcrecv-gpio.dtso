@@ -2,14 +2,14 @@
 /plugin/;
 
 / {
-    compatible = "allwinner,sun8i-h3";
+    compatible = "allwinner,sun8i-h2-plus";
 };
 
 &pio {
     rcrecv_pins: rcrecv_pins {
-	allwinner,pins = "PA13";
+	allwinner,pins = "PA19";
 	allwinner,function = "gpio_in";
-	allwinner,pull = "none";
+	allwinner,pull = <1>;
     };
 };
 
@@ -18,10 +18,10 @@
 	compatible = "rcrecv";
 	pinctrl-names = "default";
 	pinctrl-0 = <&rcrecv_pins>;
-	gpios = <&pio 0 13 0>;
+	gpios = <&pio 0 19 0>;
 
 	/* tolerance to deviations of radio pulses. Default: 60% */
-	default-tolerance = <80>;
+	default-tolerance = <60>;
 
 	status = "okay";
     };

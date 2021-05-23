@@ -383,6 +383,17 @@ rcrecv_attach(device_t dev)
     /* Try to configure our pin from fdt data on fdt-based systems. */
     err = gpio_pin_get_by_ofw_idx(dev, ofw_bus_get_node(dev), PIN_IDX,
 	&sc->pin);
+
+    /* Set properties */
+    uint32_t tolerance;
+    if (OF_getencprop(sc->node, "default-tolerance", &tolerance, sizeof(tolerance)) == sizeof(tolerance))
+    {
+	if (tolerance <= 100)
+	    sc->receive_tolerance = (uint8_t)tolerance;
+	else
+	    sc->receive_tolerance = RECEIVE_TOLERANCE;
+    }
+
 #else
     err = ENOENT;
 #endif
