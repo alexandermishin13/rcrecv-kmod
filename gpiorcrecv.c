@@ -27,7 +27,7 @@
  */
 
 /*
- * GPIORCRECV - Remote control receiver module over GPIO.
+ * RCRECV - Remote control receiver module over GPIO.
  *
  * Remote control receiver module can't be discovered automatically, please
  * specify hints s part of loader or kernel configuration:
