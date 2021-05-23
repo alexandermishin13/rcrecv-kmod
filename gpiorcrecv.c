@@ -317,7 +317,7 @@ rcrecv_detach(device_t dev)
     if (sc->pin != NULL)
 	gpiobus_release_pin(GPIO_GET_BUS(sc->pin->dev), sc->pin->pin);
 
-    /* Destroy the tm1637 cdev. */
+    /* Destroy the rcrecv cdev. */
     if (sc->cdev != NULL) {
 	mtx_lock(&sc->mtx);
 	sc->cdev->si_drv1 = NULL;
