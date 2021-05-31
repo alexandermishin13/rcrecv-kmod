@@ -1,11 +1,10 @@
 .PHONY: clean
 
-all: ioctl_magic kevent_test getopt
+all: ioctl_magic kevent_test
 
 clean:
 	rm ioctl_magic
 	rm kevent_test
-	rm getopt
 
 ioctl_magic: $@.c
 	$(CC) $< -o $@
