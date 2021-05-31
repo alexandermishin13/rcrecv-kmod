@@ -14,4 +14,4 @@ getopt: $@.c
 	$(CC) $< -o $@
 
 kevent_test: $@.c
-	$(CC) $< -lutil -o $@
+	$(CC) $< -lgpio -lutil -o $@
