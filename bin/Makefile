@@ -10,8 +10,5 @@ clean:
 ioctl_magic: $@.c
 	$(CC) $< -o $@
 
-getopt: $@.c
-	$(CC) $< -o $@
-
 kevent_test: $@.c
 	$(CC) $< -lgpio -lutil -o $@
