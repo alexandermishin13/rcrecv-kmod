@@ -2,6 +2,10 @@
 
 FreeBSD kernel module for GPIO remote control receiver
 
+## About
+
+
+
 ## Installation
 
 You need the FreeBSD source codes for build the driver. You can copy it,
@@ -13,35 +17,28 @@ make
 sudo make install
 ```
 Now You installed the driver You also need to define the receiver as a device.
-Go to `./fdt-overlay` folder and choose an `.dtso` overlay that suits Your
-system best. Surely, You need to edit it. Lines You should pay attention to
-are:
+Go to `./fdt-overlay` folder and choose an example of `.dtso` overlay that
+suits Your system best. Copy it to a name without `.sample` tail and edit it.
+Lines You should pay attention to are:
 ```
 compatible =
 pins =
 gpios =
 ```
-Obviously You should to set a pin You will use for the reciever and set a right
-compatible string (take one from Your other overlays). I recommend You to copy 
-this selected overlay to another file with a new name and edit that new one.
+Obviously You should to define the pin You connect Your receiver to. Also You
+need to define a right compatible string (Simplest way to do it is take the
+same one from Your other overlays).
 To build and install Your new overlay run:
 ```
 make
 sudo make install
 ```
-All You need now is to add new fdt-blob to `/boot/loader.conf` for autoload it
-when system is rebooted:
+All You need now is to add a name of new fdt-blob to `/boot/loader.conf` for
+autoload it when system is rebooted (An extension can be omitted):
 ```
 fdt_overlays="your,other,overlays,sun8i-h3-rcrecv-gpio"
 ```
 
 ## Status
 
-* Gets the code from a remote control;
-* Sets kernel variables;
-* Creates a device file and read a last code from it;
-* ioctl() calls for get a code and details of code;
-* Access to events by poll();
-* Access to events by kqueue();
-
-Under early development
+Finshed but still under development
