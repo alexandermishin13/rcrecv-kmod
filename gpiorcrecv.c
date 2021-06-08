@@ -84,7 +84,8 @@ SIMPLEBUS_PNP_INFO(compat_data);
 
 #define RCRECV_CDEV_NAME "rcrecv"
 
-#define SEPARATION_LIMIT 4600
+#define SEPARATION_GAP_LIMIT 4600
+#define SEPARATION_GAP_DELTA 200
 #define RECEIVE_TOLERANCE 60
 /* Number of maximum High/Low changes per packet.
  * We can handle up to (unsigned long) => 32 bit * 2 H/L changes per bit + 2 for sync
@@ -92,6 +93,13 @@ SIMPLEBUS_PNP_INFO(compat_data);
 #define RCSWITCH_MAX_CHANGES 67
 
 MALLOC_DEFINE(M_RCRECVCODE, "rcrecvcode", "Struct for received code info");
+MALLOC_DEFINE(M_RCRECVSEQ, "rcrecvseq", "Struct for received edges sequence");
+
+struct rcrecv_seq {
+    size_t		 edges_count;
+    size_t		 timings[RCSWITCH_MAX_CHANGES];
+    bool		 completed;
+};
 
 struct rcrecv_softc {
     device_t		 dev;
@@ -100,25 +108,22 @@ struct rcrecv_softc {
     void		*intr_cookie;
     struct resource	*intr_res;
     int			 intr_rid;
-    char		 received_code[sizeof(unsigned long) + 1];
+    char		 received_code[sizeof(unsigned long) * 2 + 1]; // two chars per byte + '\0'
     struct rcrecv_code	*rc_code;
+    struct rcrecv_seq	*rc_seq;
     long		 last_evtime;
-    size_t		 repeats_count;
-    size_t		 changes_count;
-    size_t		 changes_count_min;
+    size_t		 edges_count_min;
     size_t		 received_delay;
     uint8_t		 receive_tolerance;
     bool		 poll_sel;
     struct mtx		 mtx;
     struct cdev		*cdev;
     struct selinfo	 rsel;
-    size_t		 timings[RCSWITCH_MAX_CHANGES];
 };
 
 static d_open_t		rcrecv_open;
 static d_close_t	rcrecv_close;
 static d_read_t		rcrecv_read;
-static d_write_t	rcrecv_write;
 static d_ioctl_t	rcrecv_ioctl;
 static d_poll_t		rcrecv_poll;
 static d_kqfilter_t	rcrecv_kqfilter;
@@ -144,7 +149,6 @@ static struct cdevsw rcrecv_cdevsw = {
     .d_open =		rcrecv_open,
     .d_close =		rcrecv_close,
     .d_read =		rcrecv_read,
-    .d_write =		rcrecv_write,
     .d_ioctl =		rcrecv_ioctl,
     .d_poll =		rcrecv_poll,
     .d_kqfilter =	rcrecv_kqfilter,
@@ -187,25 +191,26 @@ static bool
 rcrecv_receive_protocol(struct rcrecv_softc *sc, const size_t i)
 {
     struct rcrecv_code *rcc;
+    struct rcrecv_seq *seq = sc->rc_seq;
     const protocol *p = &(proto[i]);
     unsigned long code = 0;
-    //Assuming the longer pulse length is the pulse captured in timings[0]
+    // Assuming the longer pulse length is the pulse captured in seq->timings[0]
     const size_t sync_length =  ((p->sync_factor.low) > (p->sync_factor.high)) ? (p->sync_factor.low) : (p->sync_factor.high);
-    const size_t delay = sc->timings[0] / sync_length;
+    const size_t delay = seq->timings[0] / sync_length;
     const size_t delay_tolerance = delay * sc->receive_tolerance / 100;
 
     const size_t first_timing = (p->inverted) ? 2 : 1;
 
-    for (size_t i = first_timing; i < sc->changes_count - 1; i += 2)
+    for (size_t i = first_timing; i < seq->edges_count - 1; i += 2)
     {
 	code <<= 1;
-	if (diff(sc->timings[i], delay * p->zero.high) < delay_tolerance &&
-	    diff(sc->timings[i + 1], delay * p->zero.low) < delay_tolerance) {
+	if (diff(seq->timings[i],   delay * p->zero.high) < delay_tolerance &&
+	    diff(seq->timings[i+1], delay * p->zero.low)  < delay_tolerance) {
 	    // zero
 	}
 	else
-	if (diff(sc->timings[i], delay * p->one.high) < delay_tolerance &&
-	    diff(sc->timings[i + 1], delay * p->one.low) < delay_tolerance) {
+	if (diff(seq->timings[i],   delay * p->one.high) < delay_tolerance &&
+	    diff(seq->timings[i+1], delay * p->one.low)  < delay_tolerance) {
 	    // one
 	    code |= 1;
 	}
@@ -213,15 +218,15 @@ rcrecv_receive_protocol(struct rcrecv_softc *sc, const size_t i)
 	    // Failed
 	    return false; 
 	}
-    } // for (size_t i = 1; i < sc->changes_count - 1;
+    } // for (size_t i = 1; i < seq->edges_count - 1;
 
     /* ignore very short transmissions: no device sends them,
        so this must be noise
      */
-    if (sc->changes_count > sc->changes_count_min) {
+    if (seq->edges_count > sc->edges_count_min) {
         rcc = sc->rc_code;
 	rcc->value = code;
-	rcc->bit_length = (sc->changes_count - 1) / 2;
+	rcc->bit_length = (seq->edges_count - 1) / 2;
 	rcc->proto = i + 1;
 	rcc->ready = true;
 	sc->received_delay = delay;
@@ -235,6 +240,7 @@ static void
 rcrecv_ihandler(void *arg)
 {
     struct rcrecv_softc *sc = arg;
+    struct rcrecv_seq *seq = sc->rc_seq;
 
     /* Capture time and pin state first. */
     const long evtime = sbttous(sbinuptime());
@@ -243,7 +249,7 @@ rcrecv_ihandler(void *arg)
     /* A long stretch without signal level change occurred.
        This could be the gap between two transmission.
      */
-    if (duration > SEPARATION_LIMIT)
+    if (duration > SEPARATION_GAP_LIMIT)
     {
 	/* This long signal is close in length to the long signal which
 	   started the previously recorded timings; this suggests that
@@ -251,9 +257,9 @@ rcrecv_ihandler(void *arg)
 	   here that a sender will send the signal multiple times,
 	   with roughly the same gap between them).
 	*/
-	if ((sc->repeats_count == 0) || (diff(duration, sc->timings[0]) < 200)) {
-	    sc->repeats_count++;
-	    if (sc->repeats_count == 2) {
+	if (!seq->completed || (diff(duration, seq->timings[0]) < SEPARATION_GAP_DELTA)) {
+	    if (seq->completed) {
+		/* Try protocols one by one */
 		for(size_t i = 0; i < NELEMS(proto); i++) {
 		    if (rcrecv_receive_protocol(sc, i))
 		    {
@@ -264,20 +270,23 @@ rcrecv_ihandler(void *arg)
 			break;
 		    }
 		}
-		sc->repeats_count = 0;
+		seq->completed = false;
 	    }
-	}
+	    else
+		seq->completed = true;
+	} // if (!seq->completed || (diff
 
-	sc->changes_count = 0;
-    } // if (duration > SEPARATION_LIMIT)
+	seq->edges_count = 0;
+    } // if (duration > SEPARATION_GAP_LIMIT)
 
     /* Detect overflow */
-    if (sc->changes_count >= RCSWITCH_MAX_CHANGES) {
-	sc->changes_count = 0;
-	sc->repeats_count = 0;
+    if (seq->edges_count >= RCSWITCH_MAX_CHANGES) {
+	seq->edges_count = 0;
+	seq->completed = false;
     }
 
-    sc->timings[sc->changes_count++] = duration;
+    /* Save an impulse duration to its position */
+    seq->timings[seq->edges_count++] = duration;
     sc->last_evtime = evtime;
 }
 
@@ -330,6 +339,7 @@ rcrecv_detach(device_t dev)
     knlist_destroy(&sc->rsel.si_note);
     seldrain(&sc->rsel);
     free(sc->rc_code, M_RCRECVCODE);
+    free(sc->rc_code, M_RCRECVSEQ);
 
     return (0);
 }
@@ -343,6 +353,7 @@ rcrecv_attach(device_t dev)
     struct rcrecv_softc *sc = device_get_softc(dev);
     sc->dev = dev;
     sc->rc_code = malloc(sizeof(*sc->rc_code), M_RCRECVCODE, M_WAITOK | M_ZERO);
+    sc->rc_seq  = malloc(sizeof(*sc->rc_seq),  M_RCRECVSEQ,  M_WAITOK | M_ZERO);
 
     mtx_init(&sc->mtx, "rcrecv_mtx", NULL, MTX_DEF);
     knlist_init_mtx(&sc->rsel.si_note, &sc->mtx);
@@ -375,7 +386,7 @@ rcrecv_attach(device_t dev)
 	CTLTYPE_U8 | CTLFLAG_RW | CTLFLAG_MPSAFE | CTLFLAG_ANYBODY, sc, 0,
 	&rcrecv_tolerance_sysctl, "CU", "Set tolerance for received signals, %");
 
-    sc->changes_count_min = 7;
+    sc->edges_count_min = 7;
     sc->receive_tolerance = RECEIVE_TOLERANCE;
     sc->poll_sel = true;
 
@@ -520,7 +531,9 @@ rcrecv_read(struct cdev *cdev, struct uio *uio, int ioflag __unused)
 
     dest = sc->received_code + len;
 
+    /* Fill the buffer from right to left */
     for (i = 0; i < len; i++) {
+	/* Begin from len-1 */
 	*--dest = '0' + (val & 0xf);
 	if (*dest > '9')
 	    *dest += 'a' - '9' - 1;
@@ -544,12 +557,6 @@ rcrecv_read(struct cdev *cdev, struct uio *uio, int ioflag __unused)
 	rcc->ready = false;
 
     return (error);
-}
-
-static int
-rcrecv_write(struct cdev *cdev, struct uio *uio, int ioflag __unused)
-{
-    return (0);
 }
 
 static int
