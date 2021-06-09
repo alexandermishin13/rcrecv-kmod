@@ -87,8 +87,8 @@ SIMPLEBUS_PNP_INFO(compat_data);
 #define SEPARATION_GAP_LIMIT 4600
 #define SEPARATION_GAP_DELTA 200
 #define RECEIVE_TOLERANCE 60
-/* Number of maximum High/Low changes per packet.
- * We can handle up to (unsigned long) => 32 bit * 2 H/L changes per bit + 2 for sync
+/* Number of maximum rising/falling edges per packet.
+ * We can handle up to (unsigned long) => 32 bit * 2 edges per bit + 2 edges for sync
  */
 #define RCSWITCH_MAX_CHANGES 67
 
@@ -162,15 +162,15 @@ rcrecv_tolerance_sysctl(SYSCTL_HANDLER_ARGS)
 {
     struct rcrecv_softc *sc = arg1;
     uint8_t tolerance = sc->receive_tolerance;
-    int error;
+    int err;
 
-    error = SYSCTL_OUT(req, &tolerance, sizeof(tolerance));
-    if (error != 0 || req->newptr == NULL)
-	return (error);
+    err = SYSCTL_OUT(req, &tolerance, sizeof(tolerance));
+    if (err != 0 || req->newptr == NULL)
+	return (err);
 
-    error = SYSCTL_IN(req, &tolerance, sizeof(tolerance));
-    if (error != 0)
-	return (error);
+    err = SYSCTL_IN(req, &tolerance, sizeof(tolerance));
+    if (err != 0)
+	return (err);
 
     if (tolerance > 100)
 	return (EINVAL);
@@ -183,7 +183,7 @@ rcrecv_tolerance_sysctl(SYSCTL_HANDLER_ARGS)
 static inline unsigned int
 diff(int A, int B)
 {
-  return abs(A - B);
+    return abs(A - B);
 }
 
 static bool
@@ -248,6 +248,7 @@ rcrecv_ihandler(void *arg)
     /* Capture time and pin state first. */
     const long evtime = sbttous(sbinuptime());
     const size_t duration = evtime - sc->last_evtime;
+    sc->last_evtime = evtime;
 
     /* It is a start of a new sequence even if previous is unfinished */
     if (duration > SEPARATION_GAP_LIMIT)
@@ -270,17 +271,15 @@ rcrecv_ihandler(void *arg)
 	    seq->completed = true;
 
 	seq->edges_count = 0;
-    } // if (duration > SEPARATION_GAP_LIMIT)
-
-    /* Detect overflow */
-    if (seq->edges_count >= RCSWITCH_MAX_CHANGES) {
-	seq->edges_count = 0;
+    }
+    else if (seq->edges_count >= RCSWITCH_MAX_CHANGES) {
+	/* If overflow occured */
 	seq->completed = false;
+	seq->edges_count = 0;
     }
 
-    /* Save an impulse duration to its position */
+    /* Save an impulse duration to its either next or start position */
     seq->timings[seq->edges_count++] = duration;
-    sc->last_evtime = evtime;
 }
 
 /* Device _probe() method */
@@ -449,13 +448,13 @@ rcrecv_attach(device_t dev)
 
     /* Create the tm1637 cdev. */
     err = make_dev_p(MAKEDEV_CHECKNAME | MAKEDEV_WAITOK,
-	    &sc->cdev,
-	    &rcrecv_cdevsw,
-	    0,
-	    UID_ROOT,
-	    GID_WHEEL,
-	    0600,
-	    RCRECV_CDEV_NAME);
+	&sc->cdev,
+	&rcrecv_cdevsw,
+	0,
+	UID_ROOT,
+	GID_WHEEL,
+	0600,
+	RCRECV_CDEV_NAME);
 
     if (err != 0) {
 	device_printf(dev, "Unable to create RC receiver cdev\n");
@@ -474,7 +473,7 @@ rcrecv_open(struct cdev *cdev, int oflags __unused, int devtype __unused,
 {
 
 #ifdef DEBUG
-	uprintf("Device \"%s\" opened.\n", rcrecv_cdevsw.d_name);
+    uprintf("Device \"%s\" opened.\n", rcrecv_cdevsw.d_name);
 #endif
 
     return (0);
@@ -486,7 +485,7 @@ rcrecv_close(struct cdev *cdev __unused, int fflag __unused, int devtype __unuse
 {
 
 #ifdef DEBUG
-	uprintf("Device \"%s\" closed.\n", rcrecv_cdevsw.d_name);
+    uprintf("Device \"%s\" closed.\n", rcrecv_cdevsw.d_name);
 #endif
 
     return (0);
@@ -503,12 +502,12 @@ rcrecv_read(struct cdev *cdev, struct uio *uio, int ioflag __unused)
     size_t i;
     size_t amnt;
     char *dest;
-    int error = 0;
+    int err = 0;
     off_t uio_offset_saved;
 
     /* Exit normally but no realy uiomove() if not ready */
     if (!rcc->ready)
-	return (error);
+	return (err);
 
     val = rcc->value;
     len = rcc->bit_length;
@@ -533,17 +532,17 @@ rcrecv_read(struct cdev *cdev, struct uio *uio, int ioflag __unused)
     amnt = MIN(uio->uio_resid,
 	      (len - uio->uio_offset > 0) ?
 	       len - uio->uio_offset : 0);
-    error = uiomove(sc->received_code, amnt, uio);
+    err = uiomove(sc->received_code, amnt, uio);
 
     uio->uio_offset = uio_offset_saved;
     mtx_unlock(&sc->mtx);
 
-    if (error != 0)
+    if (err != 0)
 	uprintf("uiomove failed!\n");
     else
 	rcc->ready = false;
 
-    return (error);
+    return (err);
 }
 
 static int
@@ -551,30 +550,30 @@ rcrecv_ioctl(struct cdev *cdev, u_long cmd, caddr_t data, int fflag, struct thre
 {
     struct rcrecv_softc *sc = cdev->si_drv1;
     struct rcrecv_code *rcc = sc->rc_code;
-    int error = 0;
+    int err = 0;
 
     switch (cmd) {
-	case RCRECV_READ_CODE:
-	    if (rcc->ready) {
-		rcc->ready = false;
-		*(unsigned long *)data = rcc->value;
-	    }
-	    else
-		data = NULL;
-	    break;
-	case RCRECV_READ_CODE_INFO:
+    case RCRECV_READ_CODE:
+	if (rcc->ready) {
 	    rcc->ready = false;
-	    *(struct rcrecv_code *)data = *rcc;
-	    break;
-	default:
+	    *(unsigned long *)data = rcc->value;
+	}
+	else
+	    data = NULL;
+	break;
+    case RCRECV_READ_CODE_INFO:
+	rcc->ready = false;
+	*(struct rcrecv_code *)data = *rcc;
+	break;
+    default:
 #ifdef DEBUG
-	    uprintf("Undeclared ioctl(0x%lx)\n", cmd);
+	uprintf("Undeclared ioctl(0x%lx)\n", cmd);
 #endif
-	    error = ENOTTY;
-	    break;
+	err = ENOTTY;
+	break;
     }
 
-    return (error);
+    return (err);
 }
 
 static int
