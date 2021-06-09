@@ -113,7 +113,6 @@ struct rcrecv_softc {
     struct rcrecv_seq	*rc_seq;
     long		 last_evtime;
     size_t		 edges_count_min;
-    size_t		 received_delay;
     uint8_t		 receive_tolerance;
     bool		 poll_sel;
     struct mtx		 mtx;
@@ -188,29 +187,33 @@ diff(int A, int B)
 }
 
 static bool
-rcrecv_receive_protocol(struct rcrecv_softc *sc, const size_t i)
+rcrecv_receive_protocol(struct rcrecv_softc *sc, const size_t n)
 {
-    struct rcrecv_code *rcc;
     struct rcrecv_seq *seq = sc->rc_seq;
-    const protocol *p = &(proto[i]);
-    unsigned long code = 0;
+    const protocol *p = &(proto[n]);
     // Assuming the longer pulse length is the pulse captured in seq->timings[0]
     const size_t sync_length =  ((p->sync_factor.low) > (p->sync_factor.high)) ? (p->sync_factor.low) : (p->sync_factor.high);
     const size_t delay = seq->timings[0] / sync_length;
     const size_t delay_tolerance = delay * sc->receive_tolerance / 100;
 
+    const size_t delay_zero_high = delay * p->zero.high;
+    const size_t delay_zero_low  = delay * p->zero.low;
+    const size_t delay_one_high  = delay * p->one.high;
+    const size_t delay_one_low   = delay * p->one.low;
+
     const size_t first_timing = (p->inverted) ? 2 : 1;
 
+    unsigned long code = 0;
     for (size_t i = first_timing; i < seq->edges_count - 1; i += 2)
     {
 	code <<= 1;
-	if (diff(seq->timings[i],   delay * p->zero.high) < delay_tolerance &&
-	    diff(seq->timings[i+1], delay * p->zero.low)  < delay_tolerance) {
+	if (diff(seq->timings[i],   delay_zero_high) < delay_tolerance &&
+	    diff(seq->timings[i+1], delay_zero_low)  < delay_tolerance) {
 	    // zero
 	}
 	else
-	if (diff(seq->timings[i],   delay * p->one.high) < delay_tolerance &&
-	    diff(seq->timings[i+1], delay * p->one.low)  < delay_tolerance) {
+	if (diff(seq->timings[i],   delay_one_high) < delay_tolerance &&
+	    diff(seq->timings[i+1], delay_one_low)  < delay_tolerance) {
 	    // one
 	    code |= 1;
 	}
@@ -224,12 +227,12 @@ rcrecv_receive_protocol(struct rcrecv_softc *sc, const size_t i)
        so this must be noise
      */
     if (seq->edges_count > sc->edges_count_min) {
-        rcc = sc->rc_code;
+	struct rcrecv_code *rcc = sc->rc_code;
+
 	rcc->value = code;
 	rcc->bit_length = (seq->edges_count - 1) / 2;
-	rcc->proto = i + 1;
+	rcc->proto = n + 1;
 	rcc->ready = true;
-	sc->received_delay = delay;
 	rcrecv_notify(sc);
     }
 
@@ -246,35 +249,25 @@ rcrecv_ihandler(void *arg)
     const long evtime = sbttous(sbinuptime());
     const size_t duration = evtime - sc->last_evtime;
 
-    /* A long stretch without signal level change occurred.
-       This could be the gap between two transmission.
-     */
+    /* It is a start of a new sequence even if previous is unfinished */
     if (duration > SEPARATION_GAP_LIMIT)
     {
-	/* This long signal is close in length to the long signal which
-	   started the previously recorded timings; this suggests that
-	   it may indeed by a a gap between two transmissions (we assume
-	   here that a sender will send the signal multiple times,
-	   with roughly the same gap between them).
-	*/
-	if (!seq->completed || (diff(duration, seq->timings[0]) < SEPARATION_GAP_DELTA)) {
-	    if (seq->completed) {
+	/* When the sequence is already marked as completed and its first duration time
+	   between edges is almost the same with this long one, it is time to try to
+	   transform the sequence into a code and clear the mark.
+	   In another case the sequence must be marked as finished for worked it out on
+	   a next interrupt by impulse edge.
+	 */
+	if (seq->completed && (diff(duration, seq->timings[0]) < SEPARATION_GAP_DELTA)) {
+	    for(size_t i = 0; i < NELEMS(proto); i++)
+	    {
 		/* Try protocols one by one */
-		for(size_t i = 0; i < NELEMS(proto); i++) {
-		    if (rcrecv_receive_protocol(sc, i))
-		    {
-#ifdef DEBUG
-			device_printf(sc->dev,
-			    "proto=>%i, bit=>%i, value=>%lX\n", i, sc->rc_code->bit_length, sc->rc_code->value);
-#endif
-			break;
-		    }
-		}
-		seq->completed = false;
+		if (rcrecv_receive_protocol(sc, i)) break;
 	    }
-	    else
-		seq->completed = true;
-	} // if (!seq->completed || (diff
+	    seq->completed = false;
+	}
+	else
+	    seq->completed = true;
 
 	seq->edges_count = 0;
     } // if (duration > SEPARATION_GAP_LIMIT)
@@ -309,7 +302,7 @@ rcrecv_probe(device_t dev)
 	    rv = BUS_PROBE_DEFAULT;
 #endif
 
-    device_set_desc(dev, "GPIO RF Receiver module");
+    device_set_desc(dev, "GPIO Remote Control Receiver module");
 
     return (rv);
 }
@@ -368,19 +361,15 @@ rcrecv_attach(device_t dev)
 
     SYSCTL_ADD_ULONG(ctx, tree, OID_AUTO, "value",
 	CTLFLAG_RD,
-	&sc->rc_code->value, "Value");
+	&sc->rc_code->value, "Last received code");
 
     SYSCTL_ADD_UINT(ctx, tree, OID_AUTO, "bit_length",
 	CTLFLAG_RD,
-	&sc->rc_code->bit_length, 0, "Received bit length");
-
-    SYSCTL_ADD_UINT(ctx, tree, OID_AUTO, "delay",
-	CTLFLAG_RD,
-	&sc->received_delay, 0, "Received delay");
+	&sc->rc_code->bit_length, 0, "Received code length, bits");
 
     SYSCTL_ADD_UINT(ctx, tree, OID_AUTO, "proto",
 	CTLFLAG_RD,
-	&sc->rc_code->proto, 0, "Received code protocol");
+	&sc->rc_code->proto, 0, "Code transmission protocol");
 
     SYSCTL_ADD_PROC(ctx, tree, OID_AUTO, "tolerance",
 	CTLTYPE_U8 | CTLFLAG_RW | CTLFLAG_MPSAFE | CTLFLAG_ANYBODY, sc, 0,
@@ -401,8 +390,6 @@ rcrecv_attach(device_t dev)
     {
 	if (tolerance <= 100)
 	    sc->receive_tolerance = (uint8_t)tolerance;
-	else
-	    sc->receive_tolerance = RECEIVE_TOLERANCE;
     }
 
 #else
@@ -426,7 +413,7 @@ rcrecv_attach(device_t dev)
     }
 
     /* Say what we came up with for pin config. */
-    device_printf(dev, "RF input on %s pin %u\n",
+    device_printf(dev, "Signal input on %s pin %u\n",
 	device_get_nameunit(GPIO_GET_BUS(sc->pin->dev)), sc->pin->pin);
 
     if ((err = gpio_pin_getcaps(sc->pin, &pincaps)) != 0) {
@@ -435,7 +422,7 @@ rcrecv_attach(device_t dev)
 	return (err);
     }
     if ((pincaps & edge) == 0) {
-	device_printf(dev, "Pin cannot be configured for both signal edges\n");
+	device_printf(dev, "Pin cannot be configured for both signal edges interrupt\n");
 	rcrecv_detach(dev);
 	return (ENOTSUP);
     }
@@ -455,7 +442,7 @@ rcrecv_attach(device_t dev)
         NULL, rcrecv_ihandler, sc, &sc->intr_cookie);
 
     if (err != 0) {
-	device_printf(dev, "Unable to setup rf receiver irq handler\n");
+	device_printf(dev, "Unable to setup RC receiver irq handler\n");
 	rcrecv_detach(dev);
 	return (err);
     }
@@ -471,7 +458,7 @@ rcrecv_attach(device_t dev)
 	    RCRECV_CDEV_NAME);
 
     if (err != 0) {
-	device_printf(dev, "Unable to create rcrecv cdev\n");
+	device_printf(dev, "Unable to create RC receiver cdev\n");
 	rcrecv_detach(dev);
 	return (err);
     }
