@@ -111,7 +111,7 @@ struct rcrecv_softc {
     char		 received_code[sizeof(unsigned long) * 2 + 1]; // two chars per byte + '\0'
     struct rcrecv_code	*rc_code;
     struct rcrecv_seq	*rc_seq;
-    long		 last_evtime;
+    int64_t		 last_evtime;
     size_t		 edges_count_min;
     uint8_t		 receive_tolerance;
     bool		 poll_sel;
@@ -187,7 +187,7 @@ diff(int A, int B)
 }
 
 static bool
-rcrecv_receive_protocol(struct rcrecv_softc *sc, const size_t n)
+rcrecv_decode_sequence(struct rcrecv_softc *sc, const size_t n)
 {
     struct rcrecv_seq *seq = sc->rc_seq;
     const protocol *p = &(proto[n]);
@@ -229,6 +229,7 @@ rcrecv_receive_protocol(struct rcrecv_softc *sc, const size_t n)
     if (seq->edges_count > sc->edges_count_min) {
 	struct rcrecv_code *rcc = sc->rc_code;
 
+	rcc->last_time = sc->last_evtime;
 	rcc->value = code;
 	rcc->bit_length = (seq->edges_count - 1) / 2;
 	rcc->proto = n + 1;
@@ -246,25 +247,25 @@ rcrecv_ihandler(void *arg)
     struct rcrecv_seq *seq = sc->rc_seq;
 
     /* Capture time and pin state first. */
-    const long evtime = sbttous(sbinuptime());
-    const size_t duration = evtime - sc->last_evtime;
-    sc->last_evtime = evtime;
+    const int64_t evtime = sbttous(sbinuptime());
+    const size_t duration = (size_t)(evtime - sc->last_evtime);
 
     /* It is a start of a new sequence even if previous is unfinished */
     if (duration > SEPARATION_GAP_LIMIT)
     {
 	/* When the sequence is already marked as completed and its first duration time
-	   between edges is almost the same with this long one, it is time to try to
-	   transform the sequence into a code and clear the mark.
+	   between edges (seq->timings[0]) is almost the same with this long one (duration),
+	   it is time to try to transform the sequence into a code and clear the mark.
 	   In another case the sequence must be marked as finished for worked it out on
 	   a next interrupt by impulse edge.
 	 */
 	if (seq->completed && (diff(duration, seq->timings[0]) < SEPARATION_GAP_DELTA)) {
-	    for(size_t i = 0; i < NELEMS(proto); i++)
-	    {
-		/* Try protocols one by one */
-		if (rcrecv_receive_protocol(sc, i)) break;
-	    }
+	    /* Try protocols one by one */
+	    size_t p = 0;
+	    do {
+		if (rcrecv_decode_sequence(sc, p)) break;
+	    } while(++p < NELEMS(proto));
+	    /* All done. Prepare to a new sequence */
 	    seq->completed = false;
 	}
 	else
@@ -277,6 +278,8 @@ rcrecv_ihandler(void *arg)
 	seq->completed = false;
 	seq->edges_count = 0;
     }
+
+    sc->last_evtime = evtime;
 
     /* Save an impulse duration to its either next or start position */
     seq->timings[seq->edges_count++] = duration;
@@ -330,8 +333,8 @@ rcrecv_detach(device_t dev)
 
     knlist_destroy(&sc->rsel.si_note);
     seldrain(&sc->rsel);
+    free(sc->rc_seq, M_RCRECVSEQ);
     free(sc->rc_code, M_RCRECVCODE);
-    free(sc->rc_code, M_RCRECVSEQ);
 
     return (0);
 }
@@ -361,6 +364,10 @@ rcrecv_attach(device_t dev)
     SYSCTL_ADD_ULONG(ctx, tree, OID_AUTO, "value",
 	CTLFLAG_RD,
 	&sc->rc_code->value, "Last received code");
+
+    SYSCTL_ADD_S64(ctx, tree, OID_AUTO, "last_time",
+	CTLFLAG_RD,
+	&sc->rc_code->last_time, 0, "Last time when a code was received, us");
 
     SYSCTL_ADD_UINT(ctx, tree, OID_AUTO, "bit_length",
 	CTLFLAG_RD,
@@ -582,16 +589,19 @@ rcrecv_poll(struct cdev *dev, int events, struct thread *td)
     int revents = 0;
     struct rcrecv_softc *sc = dev->si_drv1;
 
-    mtx_lock(&sc->mtx);
+    if (sc == NULL)
+	return (POLLHUP);
+
     if (events & (POLLIN | POLLRDNORM)) {
+	mtx_lock(&sc->mtx);
 	if (!sc->poll_sel) {
 	    sc->poll_sel = true;
 	    revents = events & (POLLIN | POLLRDNORM);
 	}
 	else
 	    selrecord(td, &sc->rsel);
+	mtx_unlock(&sc->mtx);
     }
-    mtx_unlock(&sc->mtx);
 
     return (revents);
 }
@@ -614,6 +624,9 @@ rcrecv_kqfilter(struct cdev *dev, struct knote *kn)
 {
     struct rcrecv_softc *sc = dev->si_drv1;
 
+    if (sc == NULL)
+	return (ENXIO);
+
     switch (kn->kn_filter) {
     case EVFILT_READ:
 	kn->kn_fop = &rcrecv_filterops;
@@ -634,14 +647,15 @@ static int
 rcrecv_kqevent(struct knote *kn, long hint)
 {
     struct rcrecv_softc *sc = kn->kn_hook;
+    struct rcrecv_code *rcc = sc->rc_code;
     size_t len;
 
     mtx_assert(&sc->mtx, MA_OWNED);
 
-    if (sc->rc_code->ready) {
-	len = sc->rc_code->bit_length;
+    if (rcc->ready) {
+	len = rcc->bit_length;
 	len >>= 2;
-	if (sc->rc_code->bit_length & 0x3)
+	if (rcc->bit_length & 0x3)
 	    len++;
 
 	kn->kn_data = len;

@@ -30,6 +30,7 @@
 #define _RCRECV_KMOD_H_
 
 struct rcrecv_code {
+    int64_t last_time;
     unsigned long value;
     size_t bit_length;
     size_t proto;
