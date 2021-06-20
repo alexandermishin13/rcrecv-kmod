@@ -4,7 +4,13 @@ FreeBSD kernel module for GPIO remote control receiver
 
 ## About
 
-
+The kernel driver reads a sequence of pulses from a remote control receiver
+(e.g., mx-rm-5v) and try to decode it into a some control code. This code can
+be read from a character device as a string or by ioctl().
+It also generates `poll`(2) and `kqueue`(2) events informing the user process
+about the presence of new code for it.
+It is possible to read additional information about the code using a ioctl()
+call (such as a timestamp. See `rcrecv.h` and `./bin/` folder for examples).
 
 ## Installation
 
@@ -41,4 +47,7 @@ fdt_overlays="your,other,overlays,sun8i-h3-rcrecv-gpio"
 
 ## Status
 
-Finshed but still under development
+Finished. Can't see what can be appended to it.
+
+## Thanks
+Suat Özgür (aka sui77) for [rc-switch](https://github.com/sui77/rc-switch)

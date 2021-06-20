@@ -61,12 +61,17 @@ after the driver is installed.
 The driver
 detects pulses on declared pin with interrupt by both edges.
 When the driver determines that the sequence of received pulses is a code,
-it generates an
-.Xr kevent 2 Ns .
+it generates
+.Xr poll 2
+and
+.Xr kqueue 2
+events.
 .Sh SEE ALSO
 .Xr rcrecv-daemon 8 ,
 .Xr loader.conf 5 ,
+.Xr kevent 2 ,
 .Xr kqueue 2 ,
+.Xr poll 2 ,
 .Xr fdt 4
 .Sh AUTHORS
 The
