@@ -3,9 +3,12 @@
 FreeBSD kernel module for GPIO remote control receiver
 
 ![RC receiver 433MHz](img/RC_Receiver_433MHz.jpeg)
-#+caption <RC receiver 433MHz>
+
+#+caption RC receiver 433MHz
 #+attr_html: :width 240 px
 [[img/RC_Receiver_433MHz.jpeg]]
+
+#+html: <img src="img/RC_Receiver_433MHz.jpeg" />
 
 ## About
 
