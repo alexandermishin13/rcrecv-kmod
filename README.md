@@ -2,6 +2,8 @@
 
 FreeBSD kernel module for GPIO remote control receiver
 
+<img width=240 height=180 src="img/RC_Receiver_433MHz.jpeg" title="RC receiver 433MHz" />
+
 ## About
 
 The kernel driver reads a sequence of pulses from a remote control receiver
@@ -18,7 +20,7 @@ You need the FreeBSD source codes for build the driver. You can copy it,
 mount usb-flash with it or mount it as NFS share from another PC to
 `/usr/src` as I did - It doesn't matter - all these methods will work fine.
 Run this commands from driver directory:
-```
+```shell
 make
 sudo make install
 ```
@@ -26,7 +28,7 @@ Now You installed the driver You also need to define the receiver as a device.
 Go to `./fdt-overlay` folder and choose an example of `.dtso` overlay that
 suits Your system best. Copy it to a name without `.sample` tail and edit it.
 Lines You should pay attention to are:
-```
+```ini
 compatible =
 pins =
 gpios =
@@ -35,13 +37,13 @@ Obviously You should to define the pin You connect Your receiver to. Also You
 need to define a right compatible string (Simplest way to do it is take the
 same one from Your other overlays).
 To build and install Your new overlay run:
-```
+```shell
 make
 sudo make install
 ```
 All You need now is to add a name of new fdt-blob to `/boot/loader.conf` for
 autoload it when system is rebooted (An extension can be omitted):
-```
+```ini
 fdt_overlays="your,other,overlays,sun8i-h3-rcrecv-gpio"
 ```
 
