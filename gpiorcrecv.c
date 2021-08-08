@@ -37,7 +37,7 @@
  * Or configure via FDT data.
  */
 
-#define FDT
+//#define FDT
 
 #include <sys/cdefs.h>
 __FBSDID("$FreeBSD$");
@@ -58,10 +58,9 @@ __FBSDID("$FreeBSD$");
 
 #include "include/dev/rcrecv/rcrecv.h"
 
-#ifdef FDT
 #include <dev/ofw/openfirm.h>
 #include <dev/ofw/ofw_bus.h>
-//#include <dev/ofw/ofw_bus_subr.h>
+#include <dev/ofw/ofw_bus_subr.h>
 
 #include <sys/mutex.h>
 #include <sys/selinfo.h>
@@ -74,7 +73,6 @@ static struct ofw_compat_data compat_data[] = {
 
 OFWBUS_PNP_INFO(compat_data);
 SIMPLEBUS_PNP_INFO(compat_data);
-#endif
 
 #define NELEMS(x) \
     (sizeof(x) / sizeof((x)[0]))
@@ -103,7 +101,6 @@ struct rcrecv_seq {
 
 struct rcrecv_softc {
     device_t		 dev;
-    phandle_t		 node;
     gpio_pin_t		 pin;
     void		*intr_cookie;
     struct resource	*intr_res;
@@ -142,6 +139,8 @@ static int		rcrecv_attach(device_t);
 static int		rcrecv_detach(device_t);
 static void		rcrecv_notify(struct rcrecv_softc *);
 
+static int		rcrecv_tolerance_sysctl(SYSCTL_HANDLER_ARGS);
+
 /* Character device entry points */
 static struct cdevsw rcrecv_cdevsw = {
     .d_version =	D_VERSION,
@@ -153,6 +152,159 @@ static struct cdevsw rcrecv_cdevsw = {
     .d_kqfilter =	rcrecv_kqfilter,
     .d_name =		RCRECV_CDEV_NAME,
 };
+
+/* 
+ * Create sysctl variables and set their handlers
+ */
+static void
+rcrecv_sysctl_register(struct rcrecv_softc *sc)
+{
+    struct sysctl_ctx_list *ctx = device_get_sysctl_ctx(sc->dev);
+    struct sysctl_oid *tree_node = device_get_sysctl_tree(sc->dev);
+    struct sysctl_oid_list *tree = SYSCTL_CHILDREN(tree_node);
+
+    SYSCTL_ADD_ULONG(ctx, tree, OID_AUTO, "value",
+	CTLFLAG_RD,
+	&sc->rc_code->value, "Last received code");
+
+    SYSCTL_ADD_S64(ctx, tree, OID_AUTO, "last_time",
+	CTLFLAG_RD,
+	&sc->rc_code->last_time, 0, "Last time when a code was received, us");
+
+    SYSCTL_ADD_UINT(ctx, tree, OID_AUTO, "bit_length",
+	CTLFLAG_RD,
+	&sc->rc_code->bit_length, 0, "Received code length, bits");
+
+    SYSCTL_ADD_UINT(ctx, tree, OID_AUTO, "proto",
+	CTLFLAG_RD,
+	&sc->rc_code->proto, 0, "Code transmission protocol");
+
+    SYSCTL_ADD_PROC(ctx, tree, OID_AUTO, "tolerance",
+	CTLTYPE_U8 | CTLFLAG_RW | CTLFLAG_MPSAFE, sc, 0,
+	&rcrecv_tolerance_sysctl, "CU", "Set tolerance for received signals, %");
+}
+
+#ifdef FDT
+
+/*
+ * Setup pin by FDT
+ */
+static int
+rcrecv_fdt_setup_pin(struct rcrecv_softc *sc)
+{
+    int err;
+
+    /* Try to configure our pin from fdt data on fdt-based systems. */
+    err = gpio_pin_get_by_ofw_idx(sc->dev, ofw_bus_get_node(sc->dev), PIN_IDX,
+	&sc->pin);
+
+    return (err);
+}
+
+/*
+ * Get FDT parameters
+ */
+static void
+rcrecv_fdt_get_params(struct rcrecv_softc *sc)
+{
+    pcell_t param_cell;
+    ssize_t param_found;
+    uint32_t param;
+    char * _from = "by default";
+
+    param_found = OF_getencprop(ofw_bus_get_node(sc->dev), "default-tolerance", &param_cell, sizeof(param_cell));
+
+    if (param_found > 0) {
+	param = (uint32_t)param_cell;
+
+	/* Check if greater than 100% */
+	if (param > 100) {
+	    device_printf(sc->dev,
+			"Could not acquire correct tolerance percent %s\n", "from DTS");
+	}
+	else {
+	    sc->receive_tolerance = (uint8_t)param;
+	    _from = "from DTS";
+	}
+    }
+
+    if (bootverbose)
+	device_printf(sc->dev,
+		"Acquired tolerance: %u%% %s\n", sc->receive_tolerance, _from);
+
+    return;
+}
+
+#endif
+
+/*
+ * Setup pin by hints
+ */
+static int
+rcrecv_hinted_setup_pin(struct rcrecv_softc *sc)
+{
+    const char *busname;
+    int err;
+
+    device_t busdev = device_get_parent(sc->dev);
+    const char *devname = device_get_name(sc->dev);
+    int unit = device_get_unit(sc->dev);
+
+    /*
+     * If there is not an "at" hint naming our actual parent, then we
+     * weren't instantiated as a child of gpiobus via hints, and we thus
+     * can't access ivars that only exist for such children.
+     */
+    if (resource_string_value(devname, unit, "at", &busname) != 0 ||
+	(strcmp(busname, device_get_nameunit(busdev)) != 0 &&
+	 strcmp(busname, device_get_name(busdev)) != 0)) {
+	    return (ENOENT);
+    }
+
+    /* Get the pin number */
+    err = gpio_pin_get_by_child_index(sc->dev, PIN_IDX, &sc->pin);
+
+    /* If we didn't get configured by either method, whine and punt. */
+    if (err != 0) {
+	device_printf(sc->dev,
+	    "Cannot acquire gpio pin (config error)\n");
+	return (err);
+    }
+
+    return (err);
+}
+
+/*
+ * Get hinted parameters
+ */
+static int
+rcrecv_hinted_get_params(struct rcrecv_softc *sc)
+{
+    int err;
+    uint32_t param;
+    const char *devname = device_get_name(sc->dev);
+    int unit = device_get_unit(sc->dev);
+    char * _from = "by default";
+
+    err = resource_int_value(devname, unit, "default-tolerance", &param);
+    if (err == 0) {
+	if (param > 100) {
+	    device_printf(sc->dev,
+			"Could not acquire correct tolerance percent %s\n", "from hints");
+	    return (EINVAL);
+	}
+	else {
+	    sc->receive_tolerance = (uint8_t)param;
+	    _from = "from hints";
+	}
+    }
+
+    if (bootverbose)
+	device_printf(sc->dev,
+    		"Acquired tolerance: %u%% %s\n", sc->receive_tolerance, _from);
+
+    return (0);
+}
 
 /*
  * Sysctl parameter: tolerance
@@ -346,6 +498,7 @@ rcrecv_attach(device_t dev)
     int err;
 
     struct rcrecv_softc *sc = device_get_softc(dev);
+
     sc->dev = dev;
     sc->rc_code = malloc(sizeof(*sc->rc_code), M_RCRECVCODE, M_WAITOK | M_ZERO);
     sc->rc_seq  = malloc(sizeof(*sc->rc_seq),  M_RCRECVSEQ,  M_WAITOK | M_ZERO);
@@ -353,51 +506,15 @@ rcrecv_attach(device_t dev)
     mtx_init(&sc->mtx, "rcrecv_mtx", NULL, MTX_DEF);
     knlist_init_mtx(&sc->rsel.si_note, &sc->mtx);
 
-    struct sysctl_ctx_list	*ctx;
-    struct sysctl_oid		*tree_node;
-    struct sysctl_oid_list	*tree;
-
-    ctx = device_get_sysctl_ctx(sc->dev);
-    tree_node = device_get_sysctl_tree(sc->dev);
-    tree = SYSCTL_CHILDREN(tree_node);
-
-    SYSCTL_ADD_ULONG(ctx, tree, OID_AUTO, "value",
-	CTLFLAG_RD,
-	&sc->rc_code->value, "Last received code");
-
-    SYSCTL_ADD_S64(ctx, tree, OID_AUTO, "last_time",
-	CTLFLAG_RD,
-	&sc->rc_code->last_time, 0, "Last time when a code was received, us");
-
-    SYSCTL_ADD_UINT(ctx, tree, OID_AUTO, "bit_length",
-	CTLFLAG_RD,
-	&sc->rc_code->bit_length, 0, "Received code length, bits");
-
-    SYSCTL_ADD_UINT(ctx, tree, OID_AUTO, "proto",
-	CTLFLAG_RD,
-	&sc->rc_code->proto, 0, "Code transmission protocol");
-
-    SYSCTL_ADD_PROC(ctx, tree, OID_AUTO, "tolerance",
-	CTLTYPE_U8 | CTLFLAG_RW | CTLFLAG_MPSAFE | CTLFLAG_ANYBODY, sc, 0,
-	&rcrecv_tolerance_sysctl, "CU", "Set tolerance for received signals, %");
+    rcrecv_sysctl_register(sc);
 
     sc->edges_count_min = 7;
-    sc->receive_tolerance = RECEIVE_TOLERANCE;
     sc->poll_sel = true;
+    sc->receive_tolerance = RECEIVE_TOLERANCE;
 
 #ifdef FDT
-    /* Try to configure our pin from fdt data on fdt-based systems. */
-    err = gpio_pin_get_by_ofw_idx(dev, ofw_bus_get_node(dev), PIN_IDX,
-	&sc->pin);
-
-    /* Set properties */
-    uint32_t tolerance;
-    if (OF_getencprop(sc->node, "default-tolerance", &tolerance, sizeof(tolerance)) == sizeof(tolerance))
-    {
-	if (tolerance <= 100)
-	    sc->receive_tolerance = (uint8_t)tolerance;
-    }
-
+    if ((err = rcrecv_fdt_setup_pin(sc)) == 0)
+	rcrecv_fdt_get_params(sc);
 #else
     err = ENOENT;
 #endif
@@ -407,21 +524,19 @@ rcrecv_attach(device_t dev)
      * see if we can be configured by the bus (allows hinted attachment even
      * on fdt-based systems).
      */
-    if (err != 0 &&
-	strcmp("gpiobus", device_get_name(device_get_parent(dev))) == 0)
-	    err = gpio_pin_get_by_child_index(dev, PIN_IDX, &sc->pin);
-
-    /* If we didn't get configured by either method, whine and punt. */
     if (err != 0) {
-	device_printf(sc->dev,
-	    "cannot acquire gpio pin (config error)\n");
-	return (err);
+	if ((err = rcrecv_hinted_setup_pin(sc)) != 0)
+	    return (err);
+
+	/* If there are any hinted parameters */
+	rcrecv_hinted_get_params(sc);
     }
 
     /* Say what we came up with for pin config. */
     device_printf(dev, "Signal input on %s pin %u\n",
 	device_get_nameunit(GPIO_GET_BUS(sc->pin->dev)), sc->pin->pin);
 
+    /* Check if pin can be configured for interrupts */
     if ((err = gpio_pin_getcaps(sc->pin, &pincaps)) != 0) {
 	device_printf(dev, "Cannot query capabilities of gpio pin\n");
 	rcrecv_detach(dev);
@@ -688,8 +803,10 @@ static devclass_t rcrecv_devclass;
 DEFINE_CLASS_0(rcrecv, rcrecv_driver, rcrecv_methods, sizeof(struct rcrecv_softc));
 
 #ifdef FDT
-DRIVER_MODULE(rcrecv, simplebus, rcrecv_driver, rcrecv_devclass, NULL, NULL);
+DRIVER_MODULE(rcrecv, simplebus, rcrecv_driver, rcrecv_devclass, 0, 0);
 #endif
 
 DRIVER_MODULE(rcrecv, gpiobus, rcrecv_driver, rcrecv_devclass, 0, 0);
 MODULE_VERSION(rcrecv, 1);
+MODULE_DEPEND(rcrecv, gpiobus, 1, 1, 1);
+

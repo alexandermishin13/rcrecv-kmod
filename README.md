@@ -45,9 +45,10 @@ autoload it when system is rebooted (An extension can be omitted):
 fdt_overlays="your,other,overlays,sun8i-h3-rcrecv-gpio"
 ```
 
-## Status
+## Bug
 
-Finished. Can't see what can be appended to it.
+Cannot allocate an IRQ for the pin when configured by hints.
 
 ## Thanks
+
 Suat Özgür (aka sui77) for [rc-switch](https://github.com/sui77/rc-switch)
