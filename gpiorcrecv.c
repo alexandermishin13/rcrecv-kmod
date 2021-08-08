@@ -37,7 +37,7 @@
  * Or configure via FDT data.
  */
 
-//#define FDT
+#define FDT
 
 #include <sys/cdefs.h>
 __FBSDID("$FreeBSD$");
