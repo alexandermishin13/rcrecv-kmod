@@ -268,7 +268,6 @@ rcrecv_hinted_setup_pin(struct rcrecv_softc *sc)
     if (err != 0) {
 	device_printf(sc->dev,
 	    "Cannot acquire gpio pin (config error)\n");
-	return (err);
     }
 
     return (err);
@@ -525,8 +524,10 @@ rcrecv_attach(device_t dev)
      * on fdt-based systems).
      */
     if (err != 0) {
-	if ((err = rcrecv_hinted_setup_pin(sc)) != 0)
+	if ((err = rcrecv_hinted_setup_pin(sc)) != 0) {
+	    rcrecv_detach(dev);
 	    return (err);
+	}
 
 	/* If there are any hinted parameters */
 	rcrecv_hinted_get_params(sc);
