@@ -25,6 +25,10 @@ make
 sudo make install
 ```
 Now You installed the driver You also need to define the receiver as a device.
+You can do it either by FDT-overlay or by device.hints.
+
+### FDT-overlay based setup
+
 Go to `./fdt-overlay` folder and choose an example of `.dtso` overlay that
 suits Your system best. Copy it to a name without `.sample` tail and edit it.
 Lines You should pay attention to are:
@@ -36,6 +40,7 @@ gpios =
 Obviously You should to define the pin You connect Your receiver to. Also You
 need to define a right compatible string (Simplest way to do it is take the
 same one from Your other overlays).
+
 To build and install Your new overlay run:
 ```shell
 make
@@ -47,9 +52,27 @@ autoload it when system is rebooted (An extension can be omitted):
 fdt_overlays="your,other,overlays,sun8i-h3-rcrecv-gpio"
 ```
 
-## Bug
+### device.hints based pin setup
 
-Cannot allocate an IRQ for the pin when configured by hints.
+For not DTS-compatible system You can setup the device by editing a file
+`/boot/device.hints`. By example, for a device on pin 13:
+
+```ini
+hint.rcrecv.0.at="gpiobus0"
+hint.rcrecv.0.compatible="rcrecv"
+hint.rcrecv.0.pin_list="13"
+### Optional. 60% is default tolerance value
+hint.rcrecv.0.default-tolerance="60"
+```
+
+After changes are made You need to reboot Your system - `kenv` command
+changes the variables ok but it seems they does not be honored on already
+running system anyway.
+
+## Status
+
+Tested on `Orange PI PC` and `Orange PI Zero`.
+Works like a charm for me.
 
 ## Thanks
 

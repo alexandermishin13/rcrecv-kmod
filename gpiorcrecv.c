@@ -257,18 +257,18 @@ rcrecv_hinted_setup_pin(struct rcrecv_softc *sc)
      */
     if (resource_string_value(devname, unit, "at", &busname) != 0 ||
 	(strcmp(busname, device_get_nameunit(busdev)) != 0 &&
-	 strcmp(busname, device_get_name(busdev)) != 0)) {
-	    return (ENOENT);
+	 strcmp(busname, device_get_name(busdev)) != 0))
+    {
+	return (ENOENT);
     }
 
     /* Get the pin number */
     err = gpio_pin_get_by_child_index(sc->dev, PIN_IDX, &sc->pin);
 
     /* If we didn't get configured by either method, whine and punt. */
-    if (err != 0) {
+    if (err != 0)
 	device_printf(sc->dev,
 	    "Cannot acquire gpio pin (config error)\n");
-    }
 
     return (err);
 }
@@ -300,7 +300,7 @@ rcrecv_hinted_get_params(struct rcrecv_softc *sc)
 
     if (bootverbose)
 	device_printf(sc->dev,
-    		"Acquired tolerance: %u%% %s\n", sc->receive_tolerance, _from);
+		"Acquired tolerance: %u%% %s\n", sc->receive_tolerance, _from);
 
     return (0);
 }
@@ -550,17 +550,16 @@ rcrecv_attach(device_t dev)
     }
 
     /*
-     * Transform our 'gpios' property into an interrupt resource and set up
-     * the interrupt.
+     * Create an interrupt resource from the pin and set up the interrupt.
      */
-    if ((sc->intr_res = gpio_alloc_intr_resource(dev, &sc->intr_rid, RF_ACTIVE,
+    if ((sc->intr_res = gpio_alloc_intr_resource(sc->pin->dev, &sc->intr_rid, RF_ACTIVE,
 	sc->pin, edge)) == NULL) {
 	    device_printf(dev, "Cannot allocate an IRQ for the GPIO\n");
 	    rcrecv_detach(dev);
 	    return (err);
     }
 
-    err = bus_setup_intr(dev, sc->intr_res, INTR_TYPE_MISC | INTR_MPSAFE,
+    err = bus_setup_intr(sc->pin->dev, sc->intr_res, INTR_TYPE_MISC | INTR_MPSAFE,
         NULL, rcrecv_ihandler, sc, &sc->intr_cookie);
 
     if (err != 0) {
@@ -587,7 +586,7 @@ rcrecv_attach(device_t dev)
 
     sc->cdev->si_drv1 = sc;
 
-    return (0);
+    return (err);
 }
 
 static int
@@ -810,4 +809,3 @@ DRIVER_MODULE(rcrecv, simplebus, rcrecv_driver, rcrecv_devclass, 0, 0);
 DRIVER_MODULE(rcrecv, gpiobus, rcrecv_driver, rcrecv_devclass, 0, 0);
 MODULE_VERSION(rcrecv, 1);
 MODULE_DEPEND(rcrecv, gpiobus, 1, 1, 1);
-
