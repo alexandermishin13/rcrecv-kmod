@@ -7,8 +7,8 @@ FreeBSD kernel module for GPIO remote control receiver
 ## About
 
 The kernel driver reads a sequence of pulses from a remote control receiver
-(e.g., mx-rm-5v) and try to decode it into a some control code. This code can
-be read from a character device as a string or by ioctl().
+(e.g., mx-rm-5v) and tries to decode it into a number. This number can
+be read from a character device or received by ioctl() as a control code.
 It also generates `poll`(2) and `kqueue`(2) events informing the user process
 about the presence of new code for it.
 It is possible to read additional information about the code using a ioctl()
