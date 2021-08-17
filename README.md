@@ -1,4 +1,4 @@
-# gpiorcrecv-kmod
+# rcrecv-kmod
 
 FreeBSD kernel module for GPIO remote control receiver
 

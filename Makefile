@@ -3,8 +3,7 @@
 .PATH:	${SRCTOP}/sys/dev/gpio/
 
 KMOD=rcrecv
-SRCS=gpiorcrecv.c
-
+SRCS=rcrecv.c
 SUBDIR=include man
 
 SRCS+=	\

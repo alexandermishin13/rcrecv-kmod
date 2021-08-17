@@ -14,7 +14,7 @@
 };
 
 &{/soc} {
-    gpiorcrecv@0 {
+    rcrecv@0 {
 	compatible = "rcrecv";
 	pinctrl-names = "default";
 	pinctrl-0 = <&rcrecv_pins>;
