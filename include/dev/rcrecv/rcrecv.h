@@ -32,8 +32,8 @@
 struct rcrecv_code {
     int64_t last_time;
     unsigned long value;
-    size_t bit_length;
-    size_t proto;
+    unsigned int bit_length;
+    unsigned int proto;
     bool ready;
 };
 
