@@ -7,8 +7,12 @@ import os
 import sys
 import struct
 
-RCRECV_READ_CODE_INFO = 0x4010520b #1074811403
-code_struct = code_buffer = bytearray(4 + 4 * 2 + 1)
+""" Build and run ioctl_magic first.
+    Copy RCRECV_READ_CODE_INFO magic number and
+    recalculate buffer size
+"""
+RCRECV_READ_CODE_INFO = 0x4018520b #1075335691
+code_struct = code_buffer = bytearray(8 + 4 + 4 * 2 + 1)
 
 filename = "/dev/rcrecv"
 fd = os.open(filename,os.O_RDONLY | os.O_NONBLOCK)
@@ -26,8 +30,8 @@ while True:
     r_events = kq.control(None,4)
     for event in r_events:
         fcntl.ioctl(fd, RCRECV_READ_CODE_INFO, code_buffer)
-        """ struct rcrecv_code { int64_t, unsigned long, size_t, size_t, bool } => 'qLNN?' """
-        code_struct = struct.unpack('qLNN?', code_buffer)
+        """ struct rcrecv_code { int64_t, unsigned long, unsigned int, unsigned int, bool } => 'qLII?' """
+        code_struct = struct.unpack('qLII?', code_buffer)
 
         last_time = int(code_struct[0])
         code = int(code_struct[1])
