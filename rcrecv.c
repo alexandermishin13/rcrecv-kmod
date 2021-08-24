@@ -554,7 +554,7 @@ rcrecv_attach(device_t dev)
 	sc->pin, edge)) == NULL) {
 	    device_printf(dev, "Cannot allocate an IRQ for the GPIO\n");
 	    rcrecv_detach(dev);
-	    return (err);
+	    return (ENOTSUP);
     }
 
     err = bus_setup_intr(sc->pin->dev, sc->intr_res, INTR_TYPE_MISC | INTR_MPSAFE,
