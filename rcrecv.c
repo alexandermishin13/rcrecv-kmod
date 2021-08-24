@@ -56,14 +56,17 @@ __FBSDID("$FreeBSD$");
 
 #include "include/dev/rcrecv/rcrecv.h"
 
+#ifdef FDT
 #include <dev/ofw/openfirm.h>
 #include <dev/ofw/ofw_bus.h>
 #include <dev/ofw/ofw_bus_subr.h>
+#endif
 
 #include <sys/mutex.h>
 #include <sys/selinfo.h>
 #include <sys/poll.h>
 
+#ifdef FDT
 static struct ofw_compat_data compat_data[] = {
     {"rcrecv",   true},
     {NULL,       false}
@@ -71,6 +74,7 @@ static struct ofw_compat_data compat_data[] = {
 
 OFWBUS_PNP_INFO(compat_data);
 SIMPLEBUS_PNP_INFO(compat_data);
+#endif
 
 #define NELEMS(x) \
     (sizeof(x) / sizeof((x)[0]))
