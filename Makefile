@@ -15,7 +15,4 @@ SRCS+=	\
 
 CFLAGS+=  -I.
 
-beforedepend:
-	@-/sbin/sysctl hw.fdt.dtb && echo "#define FDT 1" > opt_platform.h
-
 .include <bsd.kmod.mk>
