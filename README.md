@@ -16,13 +16,15 @@ call (such as a timestamp. See `rcrecv.h` and `./bin/` folder for examples).
 
 ## Installation
 
-You need the FreeBSD source codes for build the driver. You can copy it,
+You need the FreeBSD source codes for build the driver. You can copy it or
 mount usb-flash with it or mount it as NFS share from another PC to
 `/usr/src` as I did - It doesn't matter - all these methods will work fine.
-Run this commands from driver directory:
+Run this commands from driver directory (If Your platform haven't DTS enabled
+You can skip the first line to keep `opt_platform.h` empty):
 ```shell
-make
-sudo make install
+% echo "#define FDT 1" > opt_platform.h
+% make
+% sudo make install
 ```
 Now You installed the driver You also need to define the receiver as a device.
 You can do it either by FDT-overlay or by device.hints.
@@ -43,8 +45,8 @@ same one from Your other overlays).
 
 To build and install Your new overlay run:
 ```shell
-make
-sudo make install
+% make
+% sudo make install
 ```
 All You need now is to add a name of new fdt-blob to `/boot/loader.conf` for
 autoload it when system is rebooted (An extension can be omitted):
