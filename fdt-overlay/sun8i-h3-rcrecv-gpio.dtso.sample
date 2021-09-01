@@ -11,7 +11,7 @@
 	gpios = <&pio 0 13 0>;
 
 	/* tolerance to deviations of radio pulses. Default: 60% */
-	default-tolerance = <80>;
+	default-tolerance = <60>;
 
 	status = "okay";
     };

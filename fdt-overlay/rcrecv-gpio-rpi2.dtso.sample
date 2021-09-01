@@ -11,7 +11,7 @@
 	gpios = <&gpio 23 0>; //GPIO23 (16)
 
 	/* tolerance to deviations of radio pulses. Default: 60% */
-	default-tolerance = <80>;
+	default-tolerance = <60>;
 
 	status = "okay";
     };
