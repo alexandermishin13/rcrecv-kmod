@@ -165,7 +165,7 @@ main(int argc, char **argv)
         {"set",    required_argument, 0, 's' },
         {"unset",  required_argument, 0, 'u' },
         {"toggle", required_argument, 0, 't' },
-        {"help",   required_argument, 0, 'h' },
+        {"help",   no_argument,       0, 'h' },
         {0, 0, 0, 0}
     };
 
@@ -270,13 +270,13 @@ main(int argc, char **argv)
 		switch(node->state) {
 		case 's':
 		    gpio_pin_high(gpioc, node->pin);
-		    printf("is set\n");
+		    puts("is set\n");
 		case 'u':
 		    gpio_pin_low(gpioc, node->pin);
-		    printf("is unset\n");
+		    puts("is unset\n");
 		case 't':
 		    gpio_pin_toggle(gpioc, node->pin);
-		    printf("is toggle\n");
+		    puts("is toggle\n");
 		}
 	    }
 	}

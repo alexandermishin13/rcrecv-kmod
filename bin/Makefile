@@ -10,4 +10,4 @@ ioctl_magic: $@.c
 	$(CC) $< -o $@
 
 kevent_test: $@.c
-	$(CC) $< -lgpio -lutil -o $@
+	$(CC) $< -lgpio -lutil -lc -o $@
