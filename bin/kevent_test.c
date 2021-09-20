@@ -38,10 +38,8 @@ SLIST_HEAD(rcc_list, rcc_entry);
 static void
 usage()
 {
-    fprintf(stderr, "usage: %s [-d ctldev] -(s|u) <code>:pin [-b] [-h]"
-	"\n\n",
-	getprogname());
-    fprintf(stderr, "Possible options for method:\n\n");
+    fprintf(stderr, "usage: %s [-d ctldev] -(s|u) <code>:pin [-b] [-h]\n\n", getprogname());
+    fputs("Possible options for method:\n", stderr);
 }
 
 int i = 0;
