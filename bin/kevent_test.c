@@ -107,7 +107,7 @@ search_rcc_entry(const unsigned long *code)
 
     SLIST_FOREACH(node, &search_switch, switches)
     {
-	printf("code: %lu, pin: %u, state: %c\n", node->code, (unsigned int)node->pin, node->state);
+	printf("code: %lu, pin: %u, state: %c\n", node->code, node->pin, node->state);
 	if (node->code == *code) {
 	    tmpnode = node;
 	    break;
@@ -224,7 +224,7 @@ main(int argc, char **argv)
     }
 
     /* Open RCRecv device */
-    dev = open(dev_rcrecv, O_RDONLY | O_NOFOLLOW);
+    dev = open(dev_rcrecv, O_RDONLY);
     if (dev < 0) {
 	perror("opening RC receiver device");
 	exit(EXIT_FAILURE);
@@ -264,17 +264,17 @@ main(int argc, char **argv)
 	    printf("Received code: %lx\n", rcc.value);
 	    node = search_rcc_entry(&rcc.value);
 	    if (node != NULL) {
-		printf("Received code: %lx, pin: %u ", node->code, (unsigned int)node->pin);
+		printf("Received code: %lx, pin: %u ", node->code, node->pin);
 		switch(node->state) {
 		case 's':
 		    gpio_pin_high(gpioc, node->pin);
-		    puts("is set\n");
+		    puts("is set");
 		case 'u':
 		    gpio_pin_low(gpioc, node->pin);
-		    puts("is unset\n");
+		    puts("is unset");
 		case 't':
 		    gpio_pin_toggle(gpioc, node->pin);
-		    puts("is toggle\n");
+		    puts("is toggle");
 		}
 	    }
 	}
