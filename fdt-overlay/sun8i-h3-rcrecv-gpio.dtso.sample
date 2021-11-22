@@ -2,7 +2,7 @@
 /plugin/;
 
 / {
-    compatible = "allwinner,sun8i-h3";
+    compatible = "xunlong,orangepi-pc", "allwinner,sun8i-h3";
 };
 
 &{/soc} {
