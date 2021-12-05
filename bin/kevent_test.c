@@ -19,10 +19,10 @@
 #define DEVICE_GPIOC  "/dev/gpioc0"
 #define DEVICE_RCRECV "/dev/rcrecv"
 
-int dev;
-gpio_handle_t gpioc;
-struct pidfh *pfh;
-bool background = false;
+static int dev;
+static gpio_handle_t gpioc;
+static struct pidfh *pfh;
+static bool background = false;
 
 typedef struct rcc_entry {
     unsigned long code;
@@ -31,9 +31,9 @@ typedef struct rcc_entry {
     SLIST_ENTRY(rcc_entry) switches;
 } *rcc_entry_t;
 
-struct rcc_list search_switch;
-
 SLIST_HEAD(rcc_list, rcc_entry);
+
+static struct rcc_list search_switch;
 
 static void
 usage()
@@ -43,8 +43,6 @@ usage()
 	getprogname());
     fprintf(stderr, "Possible options for method:\n\n");
 }
-
-int i = 0;
 
 /* Signals handler. Prepare the programm for end */
 static void
