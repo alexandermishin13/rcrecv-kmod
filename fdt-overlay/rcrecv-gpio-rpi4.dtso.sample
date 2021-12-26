@@ -1,0 +1,18 @@
+/dts-v1/;
+/plugin/;
+
+/ {
+    compatible = "brcm,bcm2711";
+};
+
+&{/soc} {
+    rcrecv@0 {
+	compatible = "rcrecv";
+	gpios = <&gpio 23 0>; //GPIO23 (16)
+
+	/* tolerance to deviations of radio pulses. Default: 60% */
+	default-tolerance = <60>;
+
+	status = "okay";
+    };
+};

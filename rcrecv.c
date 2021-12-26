@@ -644,7 +644,7 @@ rcrecv_read(struct cdev *cdev, struct uio *uio, int ioflag __unused)
 
     /* Fill the buffer from right to left */
     for (register size_t i = 0; i < len; i++) {
-	/* Begin from len-1 */
+	/* One character back */
 	*--dest = '0' + (code & 0xf);
 	if (*dest > '9')
 	    *dest += OFFSET_A;
