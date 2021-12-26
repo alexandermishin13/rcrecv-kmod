@@ -1,4 +1,4 @@
-#!/usr/local/bin/python3.7
+#!/usr/local/bin/python3.8
 
 import select
 from select import kqueue, kevent
@@ -30,13 +30,13 @@ while True:
     r_events = kq.control(None,4)
     for event in r_events:
         fcntl.ioctl(fd, RCRECV_READ_CODE_INFO, code_buffer)
-        """ struct rcrecv_code { int64_t, unsigned long, unsigned int, unsigned int, bool } => 'qLII?' """
-        code_struct = struct.unpack('qLII?', code_buffer)
+        """ struct rcrecv_code { int64_t, unsigned int, unsigned int, uint32_t, bool } => 'qLII?' """
+        code_struct = struct.unpack('qIII?', code_buffer)
 
         last_time = int(code_struct[0])
-        code = int(code_struct[1])
-        bit_length = int(code_struct[2])
-        proto = int(code_struct[3])
+        bit_length = int(code_struct[1])
+        proto = int(code_struct[2])
+        code = int(code_struct[3])
         ready = bool(code_struct[4])
 
         if (bit_length == 24) and code:
