@@ -73,7 +73,7 @@ running system anyway.
 
 ## Status
 
-Tested on `Orange PI PC` and `Orange PI Zero`.
+Tested on `Orange PI PC`, `Orange PI Zero`, `Raspberry Pi 2b`, `Raspberry Pi 4b`.
 Works like a charm for me.
 
 ## Thanks
