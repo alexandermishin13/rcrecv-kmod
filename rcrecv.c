@@ -347,7 +347,7 @@ rcrecv_decode_sequence(struct rcrecv_softc *sc, const size_t n)
     struct rcrecv_seq *seq = sc->rc_seq;
     const protocol *p = &(proto[n]);
     // Assuming the longer pulse length is the pulse captured in seq->timings[0]
-    const size_t sync_length =  ((p->sync_factor.low) > (p->sync_factor.high)) ? (p->sync_factor.low) : (p->sync_factor.high);
+    const size_t sync_length =  (p->sync_factor.low > p->sync_factor.high) ? p->sync_factor.low : p->sync_factor.high;
     const size_t delay = seq->timings[0] / sync_length;
     const size_t delay_tolerance = delay * sc->receive_tolerance / 100;
 
@@ -356,19 +356,21 @@ rcrecv_decode_sequence(struct rcrecv_softc *sc, const size_t n)
     const size_t delay_one_high  = delay * p->one.high;
     const size_t delay_one_low   = delay * p->one.low;
 
-    const size_t first_timing = (p->inverted) ? 2 : 1;
+    const size_t first_timing_index = (p->inverted) ? 2 : 1;
+    const size_t edges_count = seq->edges_count - 1;
 
     register unsigned long code = 0;
-    for (register size_t i = first_timing; i < seq->edges_count - 1; i += 2)
+    for (register size_t i = first_timing_index; i < edges_count; i++)
     {
+	const size_t timing = seq->timings[i++]; // Second index increment
 	code <<= 1;
-	if (diff(seq->timings[i],   delay_zero_high) < delay_tolerance &&
-	    diff(seq->timings[i+1], delay_zero_low)  < delay_tolerance) {
+	if (diff(timing, delay_zero_high) < delay_tolerance &&
+	    diff(seq->timings[i], delay_zero_low) < delay_tolerance) {
 	    // zero
 	}
 	else
-	if (diff(seq->timings[i],   delay_one_high) < delay_tolerance &&
-	    diff(seq->timings[i+1], delay_one_low)  < delay_tolerance) {
+	if (diff(timing, delay_one_high) < delay_tolerance &&
+	    diff(seq->timings[i], delay_one_low) < delay_tolerance) {
 	    // one
 	    code |= 1;
 	}
@@ -381,12 +383,12 @@ rcrecv_decode_sequence(struct rcrecv_softc *sc, const size_t n)
     /* ignore very short transmissions: no device sends them,
        so this must be noise
      */
-    if (seq->edges_count > sc->edges_count_min) {
+    if (edges_count >= sc->edges_count_min) {
 	struct rcrecv_code *rcc = sc->rc_code;
 
 	rcc->last_time = sc->last_evtime;
 	rcc->value = code;
-	rcc->bit_length = (seq->edges_count - 1) / 2;
+	rcc->bit_length = edges_count / 2;
 	rcc->proto = n + 1;
 	rcc->ready = true;
 	rcrecv_notify(sc);
