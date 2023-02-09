@@ -183,6 +183,10 @@ rcrecv_sysctl_register(struct rcrecv_softc *sc)
 	CTLFLAG_RD,
 	&sc->rc_code->proto, 0, "Code transmission protocol");
 
+    SYSCTL_ADD_UINT(ctx, tree, OID_AUTO, "pulse_duration",
+	CTLFLAG_RD,
+	&sc->rc_code->pulse_duration, 0, "Single pulse duration, usec");
+
     SYSCTL_ADD_PROC(ctx, tree, OID_AUTO, "tolerance",
 	CTLTYPE_U8 | CTLFLAG_RW | CTLFLAG_MPSAFE, sc, 0,
 	&rcrecv_tolerance_sysctl, "CU", "Set tolerance for received signals, %");
@@ -389,6 +393,7 @@ rcrecv_decode_sequence(struct rcrecv_softc *sc, const size_t n)
 	rcc->last_time = sc->last_evtime;
 	rcc->value = code;
 	rcc->bit_length = edges_count / 2;
+	rcc->pulse_duration = delay;
 	rcc->proto = n + 1;
 	rcc->ready = true;
 	rcrecv_notify(sc);

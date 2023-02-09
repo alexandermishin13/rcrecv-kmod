@@ -34,6 +34,7 @@ struct rcrecv_code {
     unsigned int bit_length;
     unsigned int proto;
     uint32_t value;
+    size_t pulse_duration;
     bool ready;
 };
 
