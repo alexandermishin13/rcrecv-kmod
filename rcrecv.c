@@ -93,6 +93,7 @@ SIMPLEBUS_PNP_INFO(compat_data);
 #define RCSWITCH_MAX_CHANGES 67
 
 static const size_t OFFSET_A = 'a' - '9' - 1;
+static const size_t PROTO_SIZE = NELEMS(proto);
 
 MALLOC_DEFINE(M_RCRECVCODE, "rcrecvcode", "Struct for received code info");
 MALLOC_DEFINE(M_RCRECVSEQ, "rcrecvseq", "Struct for received edges sequence");
@@ -368,6 +369,7 @@ rcrecv_decode_sequence(struct rcrecv_softc *sc, const size_t n)
     {
 	const size_t timing = seq->timings[i++]; // Second index increment
 	code <<= 1;
+
 	if (diff(timing, delay_zero_high) < delay_tolerance &&
 	    diff(seq->timings[i], delay_zero_low) < delay_tolerance) {
 	    // zero
@@ -405,12 +407,14 @@ rcrecv_decode_sequence(struct rcrecv_softc *sc, const size_t n)
 static void
 rcrecv_ihandler(void *arg)
 {
+    /* Capture time and pin state first. */
+    const int64_t evtime = sbttous(sbinuptime());
+
     struct rcrecv_softc *sc = arg;
     struct rcrecv_seq *seq = sc->rc_seq;
 
-    /* Capture time and pin state first. */
-    const int64_t evtime = sbttous(sbinuptime());
     const size_t duration = (size_t)(evtime - sc->last_evtime);
+    sc->last_evtime = evtime;
 
     /* It is a start of a new sequence even if previous is unfinished */
     if (duration > SEPARATION_GAP_LIMIT)
@@ -426,7 +430,7 @@ rcrecv_ihandler(void *arg)
 	    register size_t p = 0;
 	    do {
 		if (rcrecv_decode_sequence(sc, p)) break;
-	    } while(++p < NELEMS(proto));
+	    } while(++p < PROTO_SIZE);
 	    /* All done. Prepare to a new sequence */
 	    seq->completed = false;
 	}
@@ -435,13 +439,12 @@ rcrecv_ihandler(void *arg)
 
 	seq->edges_count = 0;
     }
-    else if (seq->edges_count >= RCSWITCH_MAX_CHANGES) {
+    else
+    if (seq->edges_count >= RCSWITCH_MAX_CHANGES) {
 	/* If overflow occured */
 	seq->completed = false;
 	seq->edges_count = 0;
     }
-
-    sc->last_evtime = evtime;
 
     /* Save an impulse duration to its either next or start position */
     seq->timings[seq->edges_count++] = duration;
