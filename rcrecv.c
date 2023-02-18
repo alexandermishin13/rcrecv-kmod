@@ -91,16 +91,17 @@ SIMPLEBUS_PNP_INFO(compat_data);
  * We can handle up to (uint32_t) => 32 bit * 2 edges per bit + 2 edges for sync
  */
 #define RCSWITCH_MAX_CHANGES 67
+#define RCSWITCH_MIN_CHANGES 7
 
-static const size_t OFFSET_A = 'a' - '9' - 1;
-static const size_t PROTO_SIZE = NELEMS(proto);
+static const uint_fast8_t OFFSET_A = 'a' - '9' - 1;
+static const uint_fast8_t PROTO_SIZE = NELEMS(proto);
 
 MALLOC_DEFINE(M_RCRECVCODE, "rcrecvcode", "Struct for received code info");
 MALLOC_DEFINE(M_RCRECVSEQ, "rcrecvseq", "Struct for received edges sequence");
 
 struct rcrecv_seq {
-    size_t		 edges_count;
-    size_t		 timings[RCSWITCH_MAX_CHANGES];
+    unsigned int	 timings[RCSWITCH_MAX_CHANGES];
+    unsigned int	 edges_count;
     bool		 completed;
 };
 
@@ -113,10 +114,10 @@ struct rcrecv_softc {
     struct rcrecv_seq	*rc_seq;
     int64_t		 last_evtime;
     gpio_pin_t		 pin;
-    size_t		 edges_count_min;
+    unsigned int	 edges_count_min;
+    int			 intr_rid;
     struct selinfo	 rsel;
     struct mtx		 mtx;
-    int			 intr_rid;
     uint8_t		 receive_tolerance;
     bool		 poll_sel;
     char		 received_code[sizeof(((struct rcrecv_code *)0)->value) * 2 + 1]; // two chars per byte + '\0'
@@ -168,13 +169,13 @@ rcrecv_sysctl_register(struct rcrecv_softc *sc)
     struct sysctl_oid *tree_node = device_get_sysctl_tree(sc->dev);
     struct sysctl_oid_list *tree = SYSCTL_CHILDREN(tree_node);
 
-    SYSCTL_ADD_U32(ctx, tree, OID_AUTO, "value",
-	CTLFLAG_RD,
-	&sc->rc_code->value, 0, "Last received code");
-
     SYSCTL_ADD_S64(ctx, tree, OID_AUTO, "last_time",
 	CTLFLAG_RD,
 	&sc->rc_code->last_time, 0, "Last time when a code was received, us");
+
+    SYSCTL_ADD_UINT(ctx, tree, OID_AUTO, "value",
+	CTLFLAG_RD,
+	&sc->rc_code->value, 0, "Last received code");
 
     SYSCTL_ADD_UINT(ctx, tree, OID_AUTO, "bit_length",
 	CTLFLAG_RD,
@@ -340,7 +341,7 @@ rcrecv_tolerance_sysctl(SYSCTL_HANDLER_ARGS)
     return (0);
 }
 
-static inline unsigned int
+static inline int
 diff(int A, int B)
 {
     return abs(A - B);
@@ -352,22 +353,22 @@ rcrecv_decode_sequence(struct rcrecv_softc *sc, const size_t n)
     struct rcrecv_seq *seq = sc->rc_seq;
     const protocol *p = &(proto[n]);
     // Assuming the longer pulse length is the pulse captured in seq->timings[0]
-    const size_t sync_length =  (p->sync_factor.low > p->sync_factor.high) ? p->sync_factor.low : p->sync_factor.high;
-    const size_t delay = seq->timings[0] / sync_length;
-    const size_t delay_tolerance = delay * sc->receive_tolerance / 100;
+    const uint_fast8_t sync_length =  (p->sync_factor.low > p->sync_factor.high) ? p->sync_factor.low : p->sync_factor.high;
+    const uint_fast32_t delay = (uint_fast32_t) seq->timings[0] / sync_length;
+    const uint_fast32_t delay_tolerance = delay * sc->receive_tolerance / 100;
 
-    const size_t delay_zero_high = delay * p->zero.high;
-    const size_t delay_zero_low  = delay * p->zero.low;
-    const size_t delay_one_high  = delay * p->one.high;
-    const size_t delay_one_low   = delay * p->one.low;
+    const unsigned int delay_zero_high = delay * p->zero.high;
+    const unsigned int delay_zero_low  = delay * p->zero.low;
+    const unsigned int delay_one_high  = delay * p->one.high;
+    const unsigned int delay_one_low   = delay * p->one.low;
 
-    const size_t first_timing_index = (p->inverted) ? 2 : 1;
-    const size_t edges_count = seq->edges_count - 1;
+    const uint_fast8_t first_timing_index = (p->inverted) ? 2 : 1;
+    const uint_fast8_t edges_count = seq->edges_count - 1;
 
-    register unsigned long code = 0;
-    for (register size_t i = first_timing_index; i < edges_count; i++)
+    uint_fast32_t code = 0;
+    for (uint_fast8_t i = first_timing_index; i < edges_count; i++)
     {
-	const size_t timing = seq->timings[i++]; // Second index increment
+	const unsigned int timing = seq->timings[i++]; // Second index increment
 	code <<= 1;
 
 	if (diff(timing, delay_zero_high) < delay_tolerance &&
@@ -394,7 +395,7 @@ rcrecv_decode_sequence(struct rcrecv_softc *sc, const size_t n)
 
 	rcc->last_time = sc->last_evtime;
 	rcc->value = code;
-	rcc->bit_length = edges_count / 2;
+	rcc->bit_length = edges_count >> 2;
 	rcc->pulse_duration = delay;
 	rcc->proto = n + 1;
 	rcc->ready = true;
@@ -408,13 +409,14 @@ static void
 rcrecv_ihandler(void *arg)
 {
     /* Capture time and pin state first. */
-    const int64_t evtime = sbttous(sbinuptime());
+    const int_fast64_t evtime = sbttous(sbinuptime());
 
     struct rcrecv_softc *sc = arg;
     struct rcrecv_seq *seq = sc->rc_seq;
 
-    const size_t duration = (size_t)(evtime - sc->last_evtime);
-    sc->last_evtime = evtime;
+    /* I belive that integer is too big for the air events period */
+    const unsigned int duration = evtime - sc->last_evtime;
+    sc->last_evtime = (int64_t)evtime;
 
     /* It is a start of a new sequence even if previous is unfinished */
     if (duration > SEPARATION_GAP_LIMIT)
@@ -427,7 +429,7 @@ rcrecv_ihandler(void *arg)
 	 */
 	if (seq->completed && (diff(duration, seq->timings[0]) < SEPARATION_GAP_DELTA)) {
 	    /* Try protocols one by one */
-	    register size_t p = 0;
+	    uint_fast8_t p = 0;
 	    do {
 		if (rcrecv_decode_sequence(sc, p)) break;
 	    } while(++p < PROTO_SIZE);
@@ -521,7 +523,7 @@ rcrecv_attach(device_t dev)
 
     rcrecv_sysctl_register(sc);
 
-    sc->edges_count_min = 7;
+    sc->edges_count_min = RCSWITCH_MIN_CHANGES;
     sc->poll_sel = true;
     sc->receive_tolerance = RECEIVE_TOLERANCE;
 
@@ -633,10 +635,10 @@ rcrecv_read(struct cdev *cdev, struct uio *uio, int ioflag __unused)
     struct rcrecv_softc *sc = cdev->si_drv1;
     struct rcrecv_code *rcc = sc->rc_code;
 
-    register uint32_t code;
-    size_t len = 0;
-    size_t amnt;
+    uint_fast32_t code;
+    uint_fast8_t len = 0;
     char *dest;
+    int amnt;
     int err = 0;
     off_t uio_offset_saved;
 
@@ -653,7 +655,7 @@ rcrecv_read(struct cdev *cdev, struct uio *uio, int ioflag __unused)
     dest = sc->received_code + len;
 
     /* Fill the buffer from right to left */
-    for (register size_t i = 0; i < len; i++) {
+    for (uint_fast8_t i = 0; i < len; i++) {
 	/* One character back */
 	*--dest = '0' + (code & 0xf);
 	if (*dest > '9')
@@ -691,7 +693,7 @@ rcrecv_ioctl(struct cdev *cdev, u_long cmd, caddr_t data, int fflag, struct thre
     case RCRECV_READ_CODE:
 	if (rcc->ready) {
 	    rcc->ready = false;
-	    *(uint32_t *)data = rcc->value;
+	    *(unsigned int *)data = rcc->value;
 	}
 	else
 	    data = NULL;
