@@ -395,7 +395,7 @@ rcrecv_decode_sequence(struct rcrecv_softc *sc, const size_t n)
 
 	rcc->last_time = sc->last_evtime;
 	rcc->value = code;
-	rcc->bit_length = edges_count >> 2;
+	rcc->bit_length = edges_count / 2;
 	rcc->pulse_duration = delay;
 	rcc->proto = n + 1;
 	rcc->ready = true;
@@ -648,7 +648,7 @@ rcrecv_read(struct cdev *cdev, struct uio *uio, int ioflag __unused)
 
     code = rcc->value;
     len = rcc->bit_length;
-    len >>= 2;
+    len /= 4;
     if (rcc->bit_length & 0x3)
 	len++;
 
@@ -657,10 +657,10 @@ rcrecv_read(struct cdev *cdev, struct uio *uio, int ioflag __unused)
     /* Fill the buffer from right to left */
     for (uint_fast8_t i = 0; i < len; i++) {
 	/* One character back */
-	*--dest = '0' + (code & 0xf);
+	*--dest = '0' + ((char)code & 0x0f);
 	if (*dest > '9')
 	    *dest += OFFSET_A;
-	code >>= 4;
+	code /= 16;
     }
 
     mtx_lock(&sc->mtx);
@@ -784,7 +784,7 @@ rcrecv_kqevent(struct knote *kn, long hint)
 
     if (rcc->ready) {
 	len = rcc->bit_length;
-	len >>= 2;
+	len /= 4;
 	if (rcc->bit_length & 0x3)
 	    len++;
 
