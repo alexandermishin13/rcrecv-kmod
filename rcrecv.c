@@ -76,7 +76,10 @@ OFWBUS_PNP_INFO(compat_data);
 SIMPLEBUS_PNP_INFO(compat_data);
 #endif
 
-#define NELEMS(x) \
+#define MEMBER_SIZE(type, member) \
+    (sizeof(((type *)0)->member))
+
+#define ELEMENTS_NUMBER(x) \
     (sizeof(x) / sizeof((x)[0]))
 
 /* Use the first/only configured pin. */
@@ -94,10 +97,10 @@ SIMPLEBUS_PNP_INFO(compat_data);
 #define RCSWITCH_MIN_CHANGES 7
 
 static const uint_fast8_t OFFSET_A = 'a' - '9' - 1;
-static const uint_fast8_t PROTO_SIZE = NELEMS(proto);
+static const uint_fast8_t PROTO_SIZE = ELEMENTS_NUMBER(proto);
 
-MALLOC_DEFINE(M_RCRECVCODE, "rcrecvcode", "Struct for received code info");
-MALLOC_DEFINE(M_RCRECVSEQ, "rcrecvseq", "Struct for received edges sequence");
+MALLOC_DEFINE(M_RCRECVCODE, "rcrecvcode", "code info");
+MALLOC_DEFINE(M_RCRECVSEQ, "rcrecvseq", "code edges timings");
 
 struct rcrecv_seq {
     unsigned int	 timings[RCSWITCH_MAX_CHANGES];
@@ -120,7 +123,7 @@ struct rcrecv_softc {
     struct mtx		 mtx;
     uint8_t		 receive_tolerance;
     bool		 poll_sel;
-    char		 received_code[sizeof(((struct rcrecv_code *)0)->value) * 2 + 1]; // two chars per byte + '\0'
+    char		 received_code[MEMBER_SIZE(struct rcrecv_code, value) * 2 + 1]; // two chars per byte + '\0'
 };
 
 static d_open_t		rcrecv_open;
@@ -197,32 +200,24 @@ rcrecv_sysctl_register(struct rcrecv_softc *sc)
 #ifdef FDT
 
 /*
- * Setup pin by FDT
- */
-static int
-rcrecv_fdt_setup_pin(struct rcrecv_softc *sc)
-{
-    int err;
-
-    /* Try to configure our pin from fdt data on fdt-based systems. */
-    err = gpio_pin_get_by_ofw_idx(sc->dev, ofw_bus_get_node(sc->dev), PIN_IDX,
-	&sc->pin);
-
-    return (err);
-}
-
-/*
  * Get FDT parameters
  */
-static void
+static int
 rcrecv_fdt_get_params(struct rcrecv_softc *sc)
 {
+    phandle_t node;
     pcell_t param_cell;
     ssize_t param_found;
     uint32_t param;
+    int err;
     char * _from = "by default";
 
-    param_found = OF_getencprop(ofw_bus_get_node(sc->dev), "default-tolerance", &param_cell, sizeof(param_cell));
+    /* Try to configure our pin from fdt data on fdt-based systems. */
+    node = ofw_bus_get_node(sc->dev);
+    if ((err = gpio_pin_get_by_ofw_idx(sc->dev, node, PIN_IDX, &sc->pin)) != 0)
+	return (err);
+
+    param_found = OF_getencprop(node, "default-tolerance", &param_cell, sizeof(param_cell));
 
     if (param_found > 0) {
 	param = (uint32_t)param_cell;
@@ -242,7 +237,7 @@ rcrecv_fdt_get_params(struct rcrecv_softc *sc)
 	device_printf(sc->dev,
 		"Acquired tolerance: %u%% %s\n", sc->receive_tolerance, _from);
 
-    return;
+    return (err);
 }
 
 #endif
@@ -456,24 +451,26 @@ rcrecv_ihandler(void *arg)
 static int
 rcrecv_probe(device_t dev)
 {
-    int rv;
+    int rc;
 
     /*
      * By default we only bid to attach if specifically added by our parent
      * (usually via hint.rcrecv.#.at=busname).  On FDT systems we bid as
      * the default driver based on being configured in the FDT data.
      */
-    rv = BUS_PROBE_NOWILDCARD;
-
 #ifdef FDT
-    if (ofw_bus_status_okay(dev) &&
-	ofw_bus_search_compatible(dev, compat_data)->ocd_data)
-	    rv = BUS_PROBE_DEFAULT;
+    if (!ofw_bus_status_okay(dev))
+	return (ENXIO);
+
+    if (ofw_bus_search_compatible(dev, compat_data)->ocd_data)
+	rc = BUS_PROBE_DEFAULT;
+    else
 #endif
+	rc = BUS_PROBE_NOWILDCARD;
 
     device_set_desc(dev, "GPIO Remote Control Receiver module");
 
-    return (rv);
+    return (rc);
 }
 
 static int
@@ -515,8 +512,8 @@ rcrecv_attach(device_t dev)
     struct rcrecv_softc *sc = device_get_softc(dev);
 
     sc->dev = dev;
-    sc->rc_code = malloc(sizeof(*sc->rc_code), M_RCRECVCODE, M_WAITOK | M_ZERO);
-    sc->rc_seq  = malloc(sizeof(*sc->rc_seq),  M_RCRECVSEQ,  M_WAITOK | M_ZERO);
+    sc->rc_code = malloc(sizeof(struct rcrecv_code), M_RCRECVCODE, M_WAITOK | M_ZERO);
+    sc->rc_seq  = malloc(sizeof(struct rcrecv_seq),  M_RCRECVSEQ,  M_WAITOK | M_ZERO);
 
     mtx_init(&sc->mtx, "rcrecv_mtx", NULL, MTX_DEF);
     knlist_init_mtx(&sc->rsel.si_note, &sc->mtx);
@@ -528,26 +525,29 @@ rcrecv_attach(device_t dev)
     sc->receive_tolerance = RECEIVE_TOLERANCE;
 
 #ifdef FDT
-    if ((err = rcrecv_fdt_setup_pin(sc)) == 0)
-	rcrecv_fdt_get_params(sc);
-#else
-    err = ENOENT;
-#endif
 
     /*
      * If we didn't get configured by fdt data and our parent is gpiobus,
      * see if we can be configured by the bus (allows hinted attachment even
      * on fdt-based systems).
      */
-    if (err != 0) {
+    if ((err = rcrecv_fdt_get_params(sc)) != 0) {
+
+#endif
+
 	if ((err = rcrecv_hinted_setup_pin(sc)) != 0) {
-	    rcrecv_detach(dev);
+	    rcrecv_detach(dev); // It was the last try to configure pin, so...
 	    return (err);
 	}
 
 	/* If there are any hinted parameters */
 	rcrecv_hinted_get_params(sc);
-    }
+
+#ifdef FDT
+
+    } // if ((err = rcrecv_fdt_get_params(sc))...
+
+#endif
 
     /* Say what we came up with for pin config. */
     device_printf(dev, "Signal input on %s pin %u\n",
