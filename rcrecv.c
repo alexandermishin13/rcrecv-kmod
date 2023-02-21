@@ -400,8 +400,8 @@ rcrecv_decode_sequence(struct rcrecv_softc *sc, const size_t n)
     return true;
 }
 
-static void
-rcrecv_ihandler(void *arg)
+static int
+rcrecv_ifltr(void *arg)
 {
     /* Capture time and pin state first. */
     const int_fast64_t evtime = sbttous(sbinuptime());
@@ -414,26 +414,16 @@ rcrecv_ihandler(void *arg)
     sc->last_evtime = (int64_t)evtime;
 
     /* It is a start of a new sequence even if previous is unfinished */
-    if (duration > SEPARATION_GAP_LIMIT)
-    {
+    if (duration > SEPARATION_GAP_LIMIT) {
 	/* When the sequence is already marked as completed and its first duration time
 	   between edges (seq->timings[0]) is almost the same with this long one (duration),
 	   it is time to try to transform the sequence into a code and clear the mark.
-	   In another case the sequence must be marked as finished for worked it out on
-	   a next interrupt by impulse edge.
 	 */
-	if (seq->completed && (diff(duration, seq->timings[0]) < SEPARATION_GAP_DELTA)) {
-	    /* Try protocols one by one */
-	    uint_fast8_t p = 0;
-	    do {
-		if (rcrecv_decode_sequence(sc, p)) break;
-	    } while(++p < PROTO_SIZE);
-	    /* All done. Prepare to a new sequence */
-	    seq->completed = false;
-	}
-	else
-	    seq->completed = true;
+	if (seq->completed && (diff(duration, seq->timings[0]) < SEPARATION_GAP_DELTA))
+	    return (FILTER_SCHEDULE_THREAD); // Call the threaded handler
 
+	/* The sequence is finished and going to be worked out on the next interrupt */
+	seq->completed = true;
 	seq->edges_count = 0;
     }
     else
@@ -445,6 +435,26 @@ rcrecv_ihandler(void *arg)
 
     /* Save an impulse duration to its either next or start position */
     seq->timings[seq->edges_count++] = duration;
+
+    /* No needs for a threaded handler */
+    return (FILTER_HANDLED);
+}
+
+static void
+rcrecv_ithrd(void *arg)
+{
+    struct rcrecv_softc *sc = arg;
+    struct rcrecv_seq *seq = sc->rc_seq;
+
+    /* Try protocols one by one */
+    uint_fast8_t p = 0;
+    do {
+	if (rcrecv_decode_sequence(sc, p)) break;
+    } while(++p < PROTO_SIZE);
+
+    /* All done. Prepare to a new sequence */
+    seq->completed = false;
+    seq->edges_count = 0;
 }
 
 /* Device _probe() method */
@@ -576,7 +586,7 @@ rcrecv_attach(device_t dev)
     }
 
     err = bus_setup_intr(sc->pin->dev, sc->intr_res, INTR_TYPE_MISC | INTR_MPSAFE,
-        NULL, rcrecv_ihandler, sc, &sc->intr_cookie);
+        rcrecv_ifltr, rcrecv_ithrd, sc, &sc->intr_cookie);
 
     if (err != 0) {
 	device_printf(dev, "Unable to setup RC receiver irq handler\n");
@@ -584,7 +594,7 @@ rcrecv_attach(device_t dev)
 	return (err);
     }
 
-    /* Create the tm1637 cdev. */
+    /* Create the rcrecv cdev */
     err = make_dev_p(MAKEDEV_CHECKNAME | MAKEDEV_WAITOK,
 	&sc->cdev,
 	&rcrecv_cdevsw,
@@ -592,7 +602,10 @@ rcrecv_attach(device_t dev)
 	UID_ROOT,
 	GID_WHEEL,
 	0600,
-	RCRECV_CDEV_NAME);
+	RCRECV_CDEV_NAME
+//	RCRECV_CDEV_NAME "%d",
+//	device_get_unit(dev)
+    );
 
     if (err != 0) {
 	device_printf(dev, "Unable to create RC receiver cdev\n");
@@ -610,6 +623,15 @@ rcrecv_open(struct cdev *cdev, int oflags __unused, int devtype __unused,
     struct thread *td __unused)
 {
 
+    struct rcrecv_softc *sc = cdev->si_drv1;
+
+    /* We can't be unloaded while open, so mark ourselves BUSY. */
+    mtx_lock(&sc->mtx);
+    if (device_get_state(sc->dev) < DS_BUSY) {
+	device_busy(sc->dev);
+    }
+    mtx_unlock(&sc->mtx);
+
 #ifdef DEBUG
     uprintf("Device \"%s\" opened.\n", rcrecv_cdevsw.d_name);
 #endif
@@ -621,6 +643,15 @@ static int
 rcrecv_close(struct cdev *cdev __unused, int fflag __unused, int devtype __unused,
     struct thread *td __unused)
 {
+    struct rcrecv_softc *sc = cdev->si_drv1;
+
+    /*
+     * Un-busy on last close. We rely on the vfs counting stuff to only call
+     * this routine on last-close, so we don't need any open-count logic.
+     */
+    mtx_lock(&sc->mtx);
+    device_unbusy(sc->dev);
+    mtx_unlock(&sc->mtx);
 
 #ifdef DEBUG
     uprintf("Device \"%s\" closed.\n", rcrecv_cdevsw.d_name);
@@ -636,11 +667,11 @@ rcrecv_read(struct cdev *cdev, struct uio *uio, int ioflag __unused)
     struct rcrecv_code *rcc = sc->rc_code;
 
     uint_fast32_t code;
-    uint_fast8_t len = 0;
     char *dest;
     int amnt;
     int err = 0;
     off_t uio_offset_saved;
+    uint_fast8_t len = 0;
 
     /* Exit normally but no realy uiomove() if not ready */
     if (!rcc->ready)
@@ -778,7 +809,7 @@ rcrecv_kqevent(struct knote *kn, long hint)
 {
     struct rcrecv_softc *sc = kn->kn_hook;
     struct rcrecv_code *rcc = sc->rc_code;
-    size_t len;
+    uint_fast8_t len;
 
     mtx_assert(&sc->mtx, MA_OWNED);
 
