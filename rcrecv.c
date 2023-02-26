@@ -87,6 +87,15 @@ SIMPLEBUS_PNP_INFO(compat_data);
 
 #define RCRECV_CDEV_NAME "rcrecv"
 
+#define RCRECV_LOCK_INIT(sc)	\
+    mtx_init(&(sc)->mtx, "rcrecv_mtx", NULL, MTX_DEF)
+#define RCRECV_LOCK_DESTROY(sc)	\
+    mtx_destroy(&(sc)->mtx)
+#define RCRECV_LOCK(sc)		\
+    mtx_lock(&(sc)->mtx)
+#define RCRECV_UNLOCK(sc)	\
+    mtx_unlock(&(sc)->mtx)
+
 #define SEPARATION_GAP_LIMIT 4600
 #define SEPARATION_GAP_DELTA 200
 #define RECEIVE_TOLERANCE 60
@@ -497,11 +506,11 @@ rcrecv_detach(device_t dev)
 
     /* Destroy the rcrecv cdev. */
     if (sc->cdev != NULL) {
-	mtx_lock(&sc->mtx);
+	RCRECV_LOCK(sc);
 	sc->cdev->si_drv1 = NULL;
 	/* Wake everyone */
 	rcrecv_notify(sc);
-	mtx_unlock(&sc->mtx);
+	RCRECV_UNLOCK(sc);
 	destroy_dev(sc->cdev);
     }
 
@@ -509,6 +518,8 @@ rcrecv_detach(device_t dev)
     seldrain(&sc->rsel);
     free(sc->rc_seq, M_RCRECVSEQ);
     free(sc->rc_code, M_RCRECVCODE);
+
+    RCRECV_LOCK_DESTROY(sc);
 
     return (0);
 }
@@ -525,7 +536,7 @@ rcrecv_attach(device_t dev)
     sc->rc_code = malloc(sizeof(struct rcrecv_code), M_RCRECVCODE, M_WAITOK | M_ZERO);
     sc->rc_seq  = malloc(sizeof(struct rcrecv_seq),  M_RCRECVSEQ,  M_WAITOK | M_ZERO);
 
-    mtx_init(&sc->mtx, "rcrecv_mtx", NULL, MTX_DEF);
+    RCRECV_LOCK_INIT(sc);
     knlist_init_mtx(&sc->rsel.si_note, &sc->mtx);
 
     rcrecv_sysctl_register(sc);
@@ -626,11 +637,11 @@ rcrecv_open(struct cdev *cdev, int oflags __unused, int devtype __unused,
     struct rcrecv_softc *sc = cdev->si_drv1;
 
     /* We can't be unloaded while open, so mark ourselves BUSY. */
-    mtx_lock(&sc->mtx);
+    RCRECV_LOCK(sc);
     if (device_get_state(sc->dev) < DS_BUSY) {
 	device_busy(sc->dev);
     }
-    mtx_unlock(&sc->mtx);
+    RCRECV_UNLOCK(sc);
 
 #ifdef DEBUG
     uprintf("Device \"%s\" opened.\n", rcrecv_cdevsw.d_name);
@@ -649,9 +660,9 @@ rcrecv_close(struct cdev *cdev __unused, int fflag __unused, int devtype __unuse
      * Un-busy on last close. We rely on the vfs counting stuff to only call
      * this routine on last-close, so we don't need any open-count logic.
      */
-    mtx_lock(&sc->mtx);
+    RCRECV_LOCK(sc);
     device_unbusy(sc->dev);
-    mtx_unlock(&sc->mtx);
+    RCRECV_UNLOCK(sc);
 
 #ifdef DEBUG
     uprintf("Device \"%s\" closed.\n", rcrecv_cdevsw.d_name);
@@ -694,7 +705,7 @@ rcrecv_read(struct cdev *cdev, struct uio *uio, int ioflag __unused)
 	code /= 16;
     }
 
-    mtx_lock(&sc->mtx);
+    RCRECV_LOCK(sc);
     uio_offset_saved = uio->uio_offset;
 
     amnt = MIN(uio->uio_resid,
@@ -703,7 +714,7 @@ rcrecv_read(struct cdev *cdev, struct uio *uio, int ioflag __unused)
     err = uiomove(sc->received_code, amnt, uio);
 
     uio->uio_offset = uio_offset_saved;
-    mtx_unlock(&sc->mtx);
+    RCRECV_UNLOCK(sc);
 
     if (err != 0)
 	uprintf("uiomove failed!\n");
@@ -754,14 +765,14 @@ rcrecv_poll(struct cdev *dev, int events, struct thread *td)
 	return (POLLHUP);
 
     if (events & (POLLIN | POLLRDNORM)) {
-	mtx_lock(&sc->mtx);
+	RCRECV_LOCK(sc);
 	if (!sc->poll_sel) {
 	    sc->poll_sel = true;
 	    revents = events & (POLLIN | POLLRDNORM);
 	}
 	else
 	    selrecord(td, &sc->rsel);
-	mtx_unlock(&sc->mtx);
+	RCRECV_UNLOCK(sc);
     }
 
     return (revents);
@@ -792,9 +803,9 @@ rcrecv_kqfilter(struct cdev *dev, struct knote *kn)
     case EVFILT_READ:
 	kn->kn_fop = &rcrecv_filterops;
 	kn->kn_hook = sc;
-	mtx_lock(&sc->mtx);
+	RCRECV_LOCK(sc);
 	knlist_add(&sc->rsel.si_note, kn, 1);
-	mtx_unlock(&sc->mtx);
+	RCRECV_UNLOCK(sc);
 	break;
     default:
 	return (EINVAL);
