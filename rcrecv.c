@@ -514,6 +514,7 @@ rcrecv_detach(device_t dev)
 	destroy_dev(sc->cdev);
     }
 
+    knlist_clear(&sc->rsel.si_note, 0);
     knlist_destroy(&sc->rsel.si_note);
     seldrain(&sc->rsel);
     free(sc->rc_seq, M_RCRECVSEQ);
@@ -689,11 +690,9 @@ rcrecv_read(struct cdev *cdev, struct uio *uio, int ioflag __unused)
 	return (err);
 
     code = rcc->value;
-    len = rcc->bit_length;
-    len /= 4;
-    if (rcc->bit_length & 0x3)
-	len++;
-
+    /* the number of nibbles for the length in bits */
+    len = (rcc->bit_length + 3) / 4;
+    /* Start backward from the last one */
     dest = sc->received_code + len;
 
     /* Fill the buffer from right to left */
@@ -799,18 +798,13 @@ rcrecv_kqfilter(struct cdev *dev, struct knote *kn)
     if (sc == NULL)
 	return (ENXIO);
 
-    switch (kn->kn_filter) {
-    case EVFILT_READ:
-	kn->kn_fop = &rcrecv_filterops;
-	kn->kn_hook = sc;
-	RCRECV_LOCK(sc);
-	knlist_add(&sc->rsel.si_note, kn, 1);
-	RCRECV_UNLOCK(sc);
-	break;
-    default:
+    /* Only ENVFILT_READ is used */
+    if (kn->kn_filter != EVFILT_READ)
 	return (EINVAL);
-	//return (EOPNOTSUPP);
-    }
+
+    kn->kn_fop = &rcrecv_filterops;
+    kn->kn_hook = sc;
+    knlist_add(&sc->rsel.si_note, kn, 0);
 
     return (0);
 }
@@ -824,17 +818,14 @@ rcrecv_kqevent(struct knote *kn, long hint)
 
     mtx_assert(&sc->mtx, MA_OWNED);
 
-    if (rcc->ready) {
-	len = rcc->bit_length;
-	len /= 4;
-	if (rcc->bit_length & 0x3)
-	    len++;
-
-	kn->kn_data = len;
-	return (1);
-    }
-    else
+    if (!rcc->ready)
 	return (0);
+
+    /* the number of nibbles for the length in bits */
+    len = (rcc->bit_length + 3) / 4;
+    kn->kn_data = len;
+
+    return (1);
 }
 
 static void
