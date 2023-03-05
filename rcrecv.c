@@ -114,7 +114,7 @@ MALLOC_DEFINE(M_RCRECVSEQ, "rcrecvseq", "code edges timings");
 struct rcrecv_seq {
     unsigned int	 timings[RCSWITCH_MAX_CHANGES];
     unsigned int	 edges_count;
-    bool		 completed;
+    bool		 multiple;
 };
 
 struct rcrecv_softc {
@@ -354,7 +354,9 @@ diff(int A, int B)
 static bool
 rcrecv_decode_sequence(struct rcrecv_softc *sc, const size_t n)
 {
+    struct rcrecv_code *rcc;
     struct rcrecv_seq *seq = sc->rc_seq;
+
     const protocol *p = &(proto[n]);
     // Assuming the longer pulse length is the pulse captured in seq->timings[0]
     const uint_fast8_t sync_length =  (p->sync_factor.low > p->sync_factor.high) ? p->sync_factor.low : p->sync_factor.high;
@@ -391,20 +393,17 @@ rcrecv_decode_sequence(struct rcrecv_softc *sc, const size_t n)
 	}
     } // for (size_t i = 1; i < seq->edges_count - 1;
 
-    /* ignore very short transmissions: no device sends them,
-       so this must be noise
-     */
-    if (edges_count >= sc->edges_count_min) {
-	struct rcrecv_code *rcc = sc->rc_code;
+    /* All done. Save the variables and prepare to a new sequence */
+    seq->edges_count = 0;
 
-	rcc->last_time = sc->last_evtime;
-	rcc->value = code;
-	rcc->bit_length = edges_count / 2;
-	rcc->pulse_duration = delay;
-	rcc->proto = n + 1;
-	rcc->ready = true;
-	rcrecv_notify(sc);
-    }
+    rcc = sc->rc_code;
+
+    rcc->last_time = sc->last_evtime;
+    rcc->value = code;
+    rcc->bit_length = edges_count / 2;
+    rcc->pulse_duration = delay;
+    rcc->proto = n + 1;
+    rcc->ready = true;
 
     return true;
 }
@@ -424,21 +423,33 @@ rcrecv_ifltr(void *arg)
 
     /* It is a start of a new sequence even if previous is unfinished */
     if (duration > SEPARATION_GAP_LIMIT) {
-	/* When the sequence is already marked as completed and its first duration time
+	/* When there are multiple code sequences and the last sequence's first duration time
 	   between edges (seq->timings[0]) is almost the same with this long one (duration),
-	   it is time to try to transform the sequence into a code and clear the mark.
+	   it is time to try to transform last sequence into a code and finish this round.
 	 */
-	if (seq->completed && (diff(duration, seq->timings[0]) < SEPARATION_GAP_DELTA))
-	    return (FILTER_SCHEDULE_THREAD); // Call the threaded handler
+	if (seq->edges_count <= sc->edges_count_min) {
+	    /* The sequence is too short, this round failed */
+	    seq->multiple = false;
+	}
+	else
+	if (seq->multiple && (diff(duration, seq->timings[0]) < SEPARATION_GAP_DELTA)) {
+	    /* The round is over. Call the threaded handler to find the code */
+	    seq->multiple = false;
 
-	/* The sequence is finished and going to be worked out on the next interrupt */
-	seq->completed = true;
+	    return (FILTER_SCHEDULE_THREAD); 
+	}
+	else {
+	    /* It wasn't really multiple sending of the code. Not now, but it still can be so.
+	       Let's try the next sequence, we've already got a duration as it's timing[0].
+	     */
+	    seq->multiple = true;
+	}
 	seq->edges_count = 0;
     }
     else
     if (seq->edges_count >= RCSWITCH_MAX_CHANGES) {
-	/* If overflow occured */
-	seq->completed = false;
+    /* Check for overflow, if this isn't a start of new sequence */
+	seq->multiple = false;
 	seq->edges_count = 0;
     }
 
@@ -453,17 +464,15 @@ static void
 rcrecv_ithrd(void *arg)
 {
     struct rcrecv_softc *sc = arg;
-    struct rcrecv_seq *seq = sc->rc_seq;
 
     /* Try protocols one by one */
     uint_fast8_t p = 0;
     do {
-	if (rcrecv_decode_sequence(sc, p)) break;
+	if (rcrecv_decode_sequence(sc, p)) {
+	    rcrecv_notify(sc);
+	    break;
+	}
     } while(++p < PROTO_SIZE);
-
-    /* All done. Prepare to a new sequence */
-    seq->completed = false;
-    seq->edges_count = 0;
 }
 
 /* Device _probe() method */
