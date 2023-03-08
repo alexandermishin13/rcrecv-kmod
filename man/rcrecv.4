@@ -51,21 +51,65 @@ RCRECV_READ_CODE_INFO
 .El
 .Pp
 These calls returns codes as
-.Pa unsigned long
+.Vt unsigned int
 and
-.Pa struct rcrecv_code
-respectively and can be accessed with a file
-.Pa /usr/include/dev/rcrecv/rcrecv.h
-after the driver is installed.
+.Vt struct rcrecv_code
+respectively and, after the driver is installed, can be accessed with following
+headers file
+.Pa /usr/local/include/dev/rcrecv/rcrecv.h
 .Pp
-The driver
-detects pulses on declared pin with interrupt by both edges.
-When the driver determines that the sequence of received pulses is a code,
+The driver determines that a sequence of radio pulses may contain a code by
+analyzing a series of the same code sent by the remote control when the button
+is held down for a while. After the driver extracts the code from the sequence,
 it generates
 .Xr poll 2
-and
+or
 .Xr kqueue 2
-events.
+events if requested by the user software.
+.Pp
+Reliable identification of the code may require 3 or
+more retransmitted code sequences.
+.Pp
+The driver provides several new variables available with the
+.Xr sysctl 8
+utility that reflect the current state of the RF receiver:
+.Bd -literal
+dev.rcrecv.%d.tolerance: 60
+dev.rcrecv.%d.pulse_duration: 326
+dev.rcrecv.%d.proto: 1
+dev.rcrecv.%d.bit_length: 24
+dev.rcrecv.%d.value: 9776792
+dev.rcrecv.%d.last_time: 1422135711828
+dev.rcrecv.%d.%parent: simplebus0
+dev.rcrecv.%d.%pnpinfo: name=rcrecv@0 compat=rcrecv
+dev.rcrecv.%d.%location:
+dev.rcrecv.%d.%driver: rcrecv
+dev.rcrecv.%d.%desc: GPIO Remote Control Receiver module
+.Ed
+.Sh SYSCTL VARIABLES
+The following variables are available:
+.Bl -tag -width indent
+.It Va dev.rcrecv.%d.proto
+Detected transfer protocol number;
+.It Va dev.rcrecv.%d.pulse_duration
+Calculated nominal pulse duration for the detected protocol. The actual pulse
+widths for the protocol are multiples of this nominal value and are given as a
+factor in the transmission protocol list
+.Va static protocol proto[] .
+
+See
+.Pa /usr/local/include/dev/rcrecv/rcrecv.h
+for details;
+.It Va dev.rcrecv.%d.tolerance
+Percentage of tolerance of the durations of the received pulses from the
+durations specified for the detected transmission protocol;
+.It Va dev.rcrecv.%d.value
+The last received code value;
+.It Va dev.rcrecv.%d.bit_length
+Bit length of the received code;
+.El
+.Sh FILES
+/usr/local/include/dev/rcrecv/rcrecv.h
 .Sh SEE ALSO
 .Xr rcrecv-daemon 8 ,
 .Xr loader.conf 5 ,
