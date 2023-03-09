@@ -58,7 +58,7 @@ static protocol proto[] = {
     { 380, {1,6},   {1,3},  {3,1},  false }, // protocol 4
     { 500, {6,14},  {1,2},  {2,1},  false }, // protocol 5
     { 450, {23,1},  {1,2},  {2,1},  true },  // protocol 6 (HT6P20B)
-    { 150, {2,62},  {1,6},  {6,1},  false }, // protocol 7 (HS2303-PT, i. e. used in AUKEY Remote)
+    { 150, {2,62},  {1,6},  {6,1},  false }, // protocol 7 (HS2303-PT, i.e. used in AUKEY Remote)
     { 200, {3,130}, {7,16}, {3,16}, false }, // protocol 8 Conrad RS-200 RX
     { 200, {130,7}, {16,7}, {16,3}, true },  // protocol 9 Conrad RS-200 TX
     { 365, {18,1},  {3,1},  {1,3},  true },  // protocol 10 (1ByOne Doorbell)
@@ -66,7 +66,7 @@ static protocol proto[] = {
     { 320, {36,1},  {1,2},  {2,1},  true }   // protocol 12 (SM5212)
 };
 
-#define RCRECV_READ_CODE      _IOR('R', 10, unsigned long)
+#define RCRECV_READ_CODE      _IOR('R', 10, unsigned int)
 #define RCRECV_READ_CODE_INFO _IOR('R', 11, struct rcrecv_code)
 
 #endif /* _RCRECV_KMOD_H_ */

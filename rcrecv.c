@@ -739,6 +739,7 @@ rcrecv_ioctl(struct cdev *cdev, u_long cmd, caddr_t data, int fflag, struct thre
     struct rcrecv_code *rcc = sc->rc_code;
     int err = 0;
 
+    RCRECV_LOCK(sc);
     switch (cmd) {
     case RCRECV_READ_CODE:
 	if (rcc->ready) {
@@ -759,6 +760,7 @@ rcrecv_ioctl(struct cdev *cdev, u_long cmd, caddr_t data, int fflag, struct thre
 	err = ENOTTY;
 	break;
     }
+    RCRECV_UNLOCK(sc);
 
     return (err);
 }
