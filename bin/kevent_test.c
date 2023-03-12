@@ -101,7 +101,7 @@ daemonize(void)
 
 /* Adds new code map entry */
 static rcc_entry_t
-search_rcc_entry(const unsigned long *code)
+search_rcc_entry(const unsigned int *code)
 {
     rcc_entry_t node, tmpnode = NULL;
 
@@ -261,7 +261,7 @@ main(int argc, char **argv)
 	    err(EXIT_FAILURE, "kevent wait");
 	} else if (ret > 0) {
 	    ioctl(dev, RCRECV_READ_CODE_INFO, &rcc);
-	    printf("Received code: %lx\n", rcc.value);
+	    printf("Received code: %x\n", rcc.value);
 	    node = search_rcc_entry(&rcc.value);
 	    if (node != NULL) {
 		printf("Received code: %lx, pin: %u ", node->code, node->pin);
