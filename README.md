@@ -11,12 +11,30 @@ The kernel driver reads a sequence of pulses from a remote control receiver
 from a character device or received by ioctl() as a remote control code. The
 driver also generates `poll`(2) and `kqueue`(2) events informing the user
 process about the presence of new code for it.
-It is possible to read additional information about the code using a ioctl()
-call (such as a timestamp. See `rcrecv.h` and `./bin/` folder for examples).
+
+It is possible to read additional information about the last code it received
+using a ioctl() call (such as a timestamp or a pulse duration. See `rcrecv.h`
+and `./bin/` folder for examples).
+
+The driver also stores the additional information about the code in kernel
+variables, which can be accessed with `sysctl`(8):
+```shell
+dev.rcrecv.0.tolerance: 60
+dev.rcrecv.0.pulse_duration: 326
+dev.rcrecv.0.proto: 1
+dev.rcrecv.0.bit_length: 24
+dev.rcrecv.0.value: 9776792
+dev.rcrecv.0.last_time: 1422135711828
+dev.rcrecv.0.%parent: simplebus0
+dev.rcrecv.0.%pnpinfo: name=rcrecv@0 compat=rcrecv
+dev.rcrecv.0.%location:
+dev.rcrecv.0.%driver: rcrecv
+dev.rcrecv.0.%desc: GPIO Remote Control Receiver module
+```
 
 ## Installation
 
-You need the FreeBSD source codes for build the driver. You can copy it or
+You will need the FreeBSD sources to build the driver. You can copy it or
 mount usb-flash with it or mount it as NFS share from another PC to
 `/usr/src` as I did - It doesn't matter - all these methods will work fine.
 Run this commands from driver directory (If Your platform haven't DTS enabled
@@ -39,17 +57,18 @@ compatible =
 pins =
 gpios =
 ```
-Obviously You should define the pin You connect Your receiver to. You also
-have to set correctly the compatibility string (The implest way to do this is
-to take the one from Your other overlays).
+Obviously You have to define the pin You want to connect the receiver to.
+You also have to set correctly the compatibility string (The simplest way
+to do this is to take the one from Your other overlays).
 
 To build and install Your new overlay run:
 ```shell
 % make
 % sudo make install
 ```
-All You have to do now is add a name of new fdt-blob to `/boot/loader.conf` to
-have it automatically loaded on system reboot (An extension can be omitted):
+All You have to do now is to add the name of the new fdt-blob to
+`/boot/loader.conf` so that it is automatically loaded on system reboot
+(It's extension can be omitted):
 ```ini
 fdt_overlays="your,other,overlays,sun8i-h3-rcrecv-gpio"
 ```
